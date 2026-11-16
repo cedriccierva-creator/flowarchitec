@@ -28,9 +28,24 @@ npm install --prefix "$qa_dir" --no-save --no-package-lock jsdom@30.1.3
 NODE_PATH="$qa_dir/node_modules" node tests/architect-view.test.cjs
 ```
 
+### Native COSMIC/Wayland results
+
+Phase 4A native desktop QA is complete. The following results were reported from the COSMIC/Wayland desktop. The 50-node, 61-edge workflow’s native PNG dimensions were previously verified at 8,192 × 1,249 pixels.
+
+| Check | Result |
+| --- | --- |
+| Markdown export | PASS |
+| Native save dialogs | PASS |
+| Unsaved edits | PASS |
+| Undo/redo preservation | PASS |
+| Recovery preservation | PASS |
+| Empty workflow | PASS |
+
+An empty workflow intentionally exports a PNG labeled “No nodes in this workflow.” The exporter supplies a fixed drawing area for the placeholder when there are no nodes.
+
 ### Native COSMIC/Wayland checklist
 
-Pending. The command environment denied Vite's bind to `127.0.0.1:1420`, and the executable with embedded assets could not initialize GTK. Run the following from a COSMIC desktop terminal.
+The initial command environment denied Vite's bind to `127.0.0.1:1420`, and the executable with embedded assets could not initialize GTK there. To repeat the checks, run the following from a COSMIC desktop terminal.
 
 ```bash
 cd /home/cedric/projects/flowarchitect && npm run desktop:dev

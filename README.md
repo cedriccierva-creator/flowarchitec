@@ -81,6 +81,13 @@ Network access to npm and Rust crate sources is needed for a fresh build. The co
 - Both buttons use the Linux desktop save dialog. The suggested filename comes from the project title. Keep the `.png` or `.md` extension when renaming it. The dialog confirms before replacing an existing file. Either format can export an empty workflow.
 - Export reads committed fields, including unsaved project edits. Finish editing a draft field with Tab before exporting it. Exports operate offline and leave the open project, its file path, undo history, and recovery state in place. The buttons are available outside Presentation Mode.
 
+## AI review prompts
+
+- In the Linux desktop app, enable **Architect View**, open **AI Review Prompt**, and choose **Architecture Review**, **Reliability & Error Handling**, or **Data Flow & Handoffs**.
+- **Copy Review Prompt** writes the prompt to the desktop clipboard. **Save Review Prompt as Markdown** uses the native save dialog. FlowArchitect generates the prompt locally and you choose where to submit it. Assess any returned findings against the actual workflow before acting on them.
+- The prompt includes project notes, every node and connection in workflow order, and their IDs for citing evidence. It treats imported notes as data and preserves multiline content as escaped JSON strings in a Markdown code block. FlowArchitect omits the open project’s file path and recovery metadata. Review your own notes for sensitive details before sharing.
+- The character estimate warns at 50,000 characters. Copy and save still include the full workflow. As with other exports, commit any draft field you want included. Generating, copying, or saving a review prompt adds no project edits.
+
 ## Project files, recovery, and history
 
 - The app starts with an empty workflow. Click the project title to rename it. **New Project** resets the graph and project name. **Load demo** starts a separate workflow with the original five nodes and four edges. Switching away from unsaved changes requires confirmation.
@@ -101,6 +108,7 @@ Native file, recovery, and export actions are available in the Linux Tauri app. 
 | `src/composables/useWorkflowSession.ts` | Active project, unsaved state, history, and recovery scheduling |
 | `src/data/workflowDocument.ts`, `src/data/desktop.ts` | Workflow schema, validation, and Tauri command bridge |
 | `src/data/exportPng.ts`, `src/data/exportMarkdown.ts` | Client diagram rasterization and architecture documentation formatting |
+| `src/data/exportReviewPrompt.ts`, `src-tauri/src/review_clipboard.rs` | Offline review prompt formatting and Linux desktop clipboard support |
 | `src/components/WorkflowNode.vue` | Architect tile, Client View card, and shared connection anchors |
 | `src/components/NodePicker.vue`, `src/components/GraphInspector.vue` | Searchable picker and contextual editing |
 | `src/components/DocumentationField.vue` | Plain text editing and blur commits |
@@ -118,7 +126,7 @@ The frontend structure is adapted from the official cached `create-vite` Vue/Typ
 
 ## Verification
 
-The [verification notes](docs/verification.md) record the automated results, test commands, and Phase 4A COSMIC/Wayland checklist.
+The [verification notes](docs/verification.md) record the automated results, test commands, and COSMIC/Wayland checklists.
 
 ## Official references
 

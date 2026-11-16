@@ -9,6 +9,7 @@ import WorkflowNode from './WorkflowNode.vue'
 import { clientCard, createWorkflowNode } from '../data/nodeCatalog'
 import type { NodeKind, WorkflowNodeData } from '../data/nodeCatalog'
 import { isDesktop } from '../data/desktop'
+import { reviewModes } from '../data/exportReviewPrompt'
 import { captureWorkflow, materializeEdge, materializeNode, untitled } from '../data/workflowDocument'
 import type { NodeDocumentation, NodeDocumentationField, OverviewField, ProjectOverview, WorkflowDocument } from '../data/workflowDocument'
 import { useWorkflowSession } from '../composables/useWorkflowSession'
@@ -27,6 +28,9 @@ const projectName = ref(untitled)
 const architectView = ref(false)
 const clientView = ref(false)
 const presenting = defineModel<boolean>('presenting', { required: true })
+const reviewOpen = ref(false)
+const showReviewControls = computed(() => architectView.value && !clientView.value && !presenting.value)
+const longReviewPromptThreshold = 50_000
 const presentButton = ref<HTMLButtonElement>()
 const exitPresentationButton = ref<HTMLButtonElement>()
 const overview = shallowRef<ProjectOverview>()
@@ -60,8 +64,9 @@ let connectionCancelled = false
 const activeNodeDrag = shallowRef<{ event: MouseTouchEvent; positions: { id: string; position: XYPosition }[] }>()
 
 const {
-  busy, exporting, exportSucceeded, notice, recoveryError, recoveries, showRecovery, dirty, filePath, fileName, canUndo, canRedo,
+  busy, exporting, exportStatus, notice, recoveryError, recoveries, showRecovery, dirty, filePath, fileName, canUndo, canRedo,
   recordEdit, undo, redo, newProject, openProject, saveProject, exportProject, restore, discardRecovery,
+  reviewMode, reviewPromptLength, copyReviewPrompt, saveReviewPrompt,
 } = useWorkflowSession(
   () => captureWorkflow(
     { name: projectName.value, overview: overview.value }, nodes.value, edges.value, nodeDocumentation, edgeDescriptions,
@@ -230,8 +235,8 @@ function keepExportDraftFocused(event: MouseEvent) {
   if (document.activeElement?.matches('input, textarea, select')) event.preventDefault()
 }
 
-function requestExport(format: 'png' | 'md') {
-  if (!activeConnection && !reconnectingEdgeId) void exportProject(format)
+function requestExport(action: () => Promise<void>) {
+  if (!activeConnection && !reconnectingEdgeId) void action()
 }
 
 function releaseGesture(event: MouseTouchEvent) {
@@ -245,7 +250,8 @@ function releaseGesture(event: MouseTouchEvent) {
 }
 
 function onEscape(event: KeyboardEvent) {
-  if (event.isComposing || (event.target instanceof HTMLElement && event.target.closest('.editor-documentation-field'))) return
+  if (event.isComposing || (event.target instanceof HTMLElement
+    && event.target.closest('.editor-documentation-field, .review-prompt select'))) return
 
   if (presenting.value) {
     setPresentation(false)
@@ -395,16 +401,43 @@ function applyDocument(document: WorkflowDocument, fit = false) {
         </button>
         <div class="export-actions" role="group" aria-label="Export workflow">
           <button class="reset-button" type="button" data-export-action
-            :disabled="busy || exporting || !isDesktop" @mousedown="keepExportDraftFocused" @click="requestExport('png')">
+            :disabled="busy || exporting || !isDesktop" @mousedown="keepExportDraftFocused" @click="requestExport(() => exportProject('png'))">
             Export PNG
           </button>
           <button class="reset-button" type="button" data-export-action
-            :disabled="busy || exporting || !isDesktop" @mousedown="keepExportDraftFocused" @click="requestExport('md')">
+            :disabled="busy || exporting || !isDesktop" @mousedown="keepExportDraftFocused" @click="requestExport(() => exportProject('md'))">
             Export Markdown
           </button>
         </div>
+        <button v-if="showReviewControls" class="reset-button" type="button" data-export-action
+          :aria-controls="reviewOpen ? 'review-prompt' : undefined" :aria-expanded="reviewOpen"
+          @mousedown="keepExportDraftFocused" @click="reviewOpen = !reviewOpen">
+          AI Review Prompt
+        </button>
       </div>
     </div>
+
+    <section v-if="showReviewControls && reviewOpen" id="review-prompt" class="review-prompt" aria-label="AI review prompt">
+      <div class="review-prompt-actions">
+        <label>
+          Review mode
+          <select v-model="reviewMode" :disabled="busy || exporting">
+            <option v-for="(mode, id) in reviewModes" :key="id" :value="id">{{ mode.label }}</option>
+          </select>
+        </label>
+        <button class="reset-button" type="button" data-export-action :disabled="busy || exporting || !isDesktop"
+          @mousedown="keepExportDraftFocused" @click="requestExport(copyReviewPrompt)">Copy Review Prompt</button>
+        <button class="reset-button" type="button" data-export-action :disabled="busy || exporting || !isDesktop"
+          @mousedown="keepExportDraftFocused" @click="requestExport(saveReviewPrompt)">Save Review Prompt as Markdown</button>
+      </div>
+      <p class="review-prompt-note">
+        Generated locally. You choose where to submit the prompt.
+        <span :class="{ 'review-prompt-long': reviewPromptLength >= longReviewPromptThreshold }">
+          About {{ reviewPromptLength.toLocaleString() }} characters.
+          <template v-if="reviewPromptLength >= longReviewPromptThreshold">This may exceed some model input limits.</template>
+        </span>
+      </p>
+    </section>
 
     <div v-if="!clientView && recoveries.length" class="recovery-panel">
       <button class="reset-button" type="button" :aria-expanded="showRecovery" @click="showRecovery = !showRecovery">
@@ -421,7 +454,8 @@ function applyDocument(document: WorkflowDocument, fit = false) {
     </div>
 
     <p v-if="!presenting && (notice || recoveryError)" class="workspace-notice"
-      :class="{ 'export-success': exportSucceeded && !recoveryError }" role="status">{{ notice }} {{ recoveryError }}</p>
+      :class="{ 'export-success': exportStatus === 'success' && !recoveryError, 'export-cancelled': exportStatus === 'cancelled' && !recoveryError }"
+      role="status">{{ notice }} {{ recoveryError }}</p>
 
     <div class="canvas-frame" :inert="busy">
       <VueFlow

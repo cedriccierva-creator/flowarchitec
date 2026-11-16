@@ -1,5 +1,61 @@
 # FlowArchitect verification
 
+## Phase 4B — AI-assisted architecture review prompt export
+
+Started on 2026-11-16 from a clean worktree at `19bdc74`, after Phase 4A native QA was recorded as complete.
+
+### Automated checks
+
+| Check | Result |
+| --- | --- |
+| `npm run doctor` | Passed. Node, Cargo, GTK 3.24.41, and WebKitGTK 2.52.6 were detected. |
+| `npm run build` | Passed. Vue and TypeScript checks and the Vite production build completed. |
+| `tests/architect-view.test.cjs` | 31 passed. Five review tests ran against the production bundle alongside 26 existing regressions. Canvas input and geometry, Tauri clipboard operations, and save dialogs were simulated. |
+| `cargo test --manifest-path src-tauri/Cargo.toml --locked --offline` | 3 passed. The Rust tests exercise real local file operations, including atomic Markdown export and write failure cleanup. |
+| `cargo build --manifest-path src-tauri/Cargo.toml --locked --offline --features tauri/custom-protocol` | Passed. This compiled the GTK clipboard command and embedded the production frontend. |
+| `CARGO_NET_OFFLINE=true npm run desktop:build -- -- --locked --offline` | Passed. The Tauri release build produced the standalone Linux executable. |
+| `cargo fmt --manifest-path src-tauri/Cargo.toml --check` and `git diff --check` | Passed. |
+
+The bundle tests cover all three modes, safe Markdown delimiters, multiline notes, exact ID and handle references, deterministic output, the empty workflow, and a 50-node, 61-edge fixture that triggers the length warning. They verify clipboard success and failure, native save cancellation and write failure via mocked Tauri commands, and no external calls through instrumented web APIs. They also check that review actions preserve the project path, dirty state, undo and redo, recovery writes, and the active view. The desktop results below cover the native clipboard and Markdown save dialog.
+
+```bash
+npm run build
+qa_dir=$(mktemp -d)
+npm install --prefix "$qa_dir" --no-save --no-package-lock jsdom@30.1.3
+NODE_PATH="$qa_dir/node_modules" node tests/architect-view.test.cjs
+```
+
+### Native COSMIC/Wayland results
+
+Phase 4B native desktop QA is complete. All nine checks passed on 2026-11-16, with no issues reported.
+
+| Check | Result |
+| --- | --- |
+| Architecture Review | PASS |
+| Reliability & Error Handling | PASS |
+| Data Flow & Handoffs | PASS |
+| Native clipboard | PASS |
+| Markdown save | PASS |
+| Large workflow | PASS |
+| View restrictions | PASS |
+| Editor state preservation | PASS |
+| Minimum window size | PASS |
+
+### Native COSMIC/Wayland checklist
+
+To repeat the checks, run from a COSMIC desktop terminal.
+
+```bash
+cd /home/cedric/projects/flowarchitect && npm run desktop:dev
+```
+
+1. Load the demo, enable **Architect View**, and open **AI Review Prompt**. Select each mode with the keyboard and mouse. Resize to the minimum window size and verify the options, character estimate, and both actions remain visible while the canvas can still pan and zoom.
+2. Add multiline project, node, and connection notes. Include backtick fences, quotes, angle brackets, and non-ASCII text. Copy each mode and paste into a local plain-text editor while FlowArchitect is open. Confirm the instructions change with the mode and the prompt has stable node IDs, edge IDs, and port references. Save one mode as Markdown and compare it with the pasted text. Verify that all escaped text decodes back to the original notes.
+3. Cancel the Markdown save dialog and check the cancellation message. Save to a new destination and check success. Try a wrong extension and, where the chooser permits it, an unwritable destination. Verify the failure message and that another attempt succeeds at a writable location.
+4. Open the Order Operations workflow and verify the prompt includes all 50 nodes and 61 connections in order. Add long notes if needed to reach the warning at 50,000 characters. Copy and save the prompt and verify the last connection is intact. Repeat with an empty workflow and confirm that both action buttons work and the prompt identifies the empty graph.
+5. Open a saved project. Commit a note with Tab, commit a second edit, then undo it to create a redo step. Wait for recovery to settle. Copy and save while a note draft is still focused and confirm that the prompt includes the committed unsaved note. Check that the draft, selection, open project path, dirty indicator, and recovery snapshot stay in place. Confirm undo and redo still reach the expected states.
+6. Switch to Client View, enter Presentation Mode, exit, and return to Architect View. Check that review controls appear only in Architect View and that regular PNG and Markdown exports, canvas interactions, and presentation controls still work.
+
 ## Phase 4A — PNG and Markdown export
 
 Checked on 2026-11-16 from a clean worktree at `4138c3d`. The Phase 3B desktop review had passed 14/14 checks.

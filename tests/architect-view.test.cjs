@@ -27,9 +27,11 @@ function rect(x, y, width, height) {
 }
 
 function mockCanvas(window) {
+  let canvas = rect(20, 130, 1080, 490)
   window.Element.prototype.getBoundingClientRect = function () {
+    if (this.matches('.workflow-minimap')) return rect(34, 449, 160, 92)
     const node = this.closest('.vue-flow__node')
-    if (!node) return rect(20, 130, 1080, 490)
+    if (!node) return canvas
     const [x, y] = node.style.transform.match(/[-.\d]+(?=px)/g)?.map(Number) ?? [0, 0]
     const client = node.closest('.is-client-view')
     const width = client ? 140 : 72
@@ -59,6 +61,10 @@ function mockCanvas(window) {
     unobserve() {}
     disconnect() {}
   }
+  return (width, height) => {
+    canvas = rect(20, 130, width, height)
+    window.dispatchEvent(new window.Event('resize'))
+  }
 }
 
 async function launch(t, recoveries = new Map()) {
@@ -78,7 +84,7 @@ async function launch(t, recoveries = new Map()) {
     window.close()
     assert.deepEqual(errors, [])
   })
-  mockCanvas(window)
+  const resizeCanvas = mockCanvas(window)
 
   const files = new Map()
   const exports = []
@@ -259,7 +265,7 @@ async function launch(t, recoveries = new Map()) {
   await tick()
   return {
     query, all, button, node, edge, handle, field, isDirty, click, drag, key, type, edit, save, open, close,
-    mouse, exports, clipboard, networkRequests, recoveryWrites,
+    mouse, exports, clipboard, networkRequests, recoveryWrites, resizeCanvas,
     raster: () => lastRaster,
     setExportResponse: (response) => { exportResponse = response },
     setClipboardError: (error) => { clipboardError = error },
@@ -1137,8 +1143,7 @@ test('empty review reports clipboard failures, native save cancellation, and nat
   assert.deepEqual(app.recoveryWrites, [])
 })
 
-test('long review prompts include all 50 nodes and 61 edges in deterministic workflow order', async (t) => {
-  const app = await launch(t)
+function largeWorkflowFixture() {
   const nodes = Array.from({ length: 50 }, (_, i) => ({
     id: 'order-' + i, kind: 'http', label: 'Order step ' + i, position: { x: i * 130, y: i % 3 * 120 },
     documentation: { purpose: 'Validate order data. '.repeat(70) + 'End of step ' + i },
@@ -1148,7 +1153,14 @@ test('long review prompts include all 50 nodes and 61 edges in deterministic wor
     sourceHandle: 'out', targetHandle: 'in', description: 'Handoff notes ' + i,
   }))
   const sections = Array.from({ length: 5 }, (_, index) => stage('stage-' + index, 'Stage ' + (index + 1), index * 1300, 0, 1300, 350))
-  await app.open('/orders.json', { schemaVersion: 1, metadata: { name: 'Order Operations' }, nodes, edges, sections })
+  return { schemaVersion: 1, metadata: { name: 'Order Operations' }, nodes, edges, sections }
+}
+
+test('long review prompts include all 50 nodes and 61 edges in deterministic workflow order', async (t) => {
+  const app = await launch(t)
+  const fixture = largeWorkflowFixture()
+  const { nodes, edges, sections } = fixture
+  await app.open('/orders.json', fixture)
   assert.equal(app.all('.visual-section').length, 5)
   await app.click('Architect View')
   await app.click('AI Review Prompt')
@@ -1818,4 +1830,296 @@ test('keeps sections read-only in Client View and Presentation Mode and preserve
   assert.deepEqual(sectionGeometry(sectionElement(app)), original)
   assert.equal(app.isDirty(), false)
   assert.ok(app.button('Add Section'))
+})
+
+const findInput = (app) => app.query('#find-node input')
+const findResults = (app) => app.all('#find-node-results [role="option"]')
+const viewportTransform = (app) => app.query('.vue-flow__transformationpane').style.transform
+const viewportValues = (app) => viewportTransform(app).match(/-?[\d.]+(?:e[+-]?\d+)?/gi).map(Number)
+
+async function typeFind(app, query) {
+  const input = findInput(app)
+  input.value = query
+  input.dispatchEvent(new input.ownerDocument.defaultView.Event('input', { bubbles: true }))
+  await tick()
+  return input
+}
+
+function assertCentered(app, x, y, expectedZoom) {
+  const [tx, ty, zoom] = viewportValues(app)
+  const { width, height } = app.query('.vue-flow__pane').getBoundingClientRect()
+  assert.equal(zoom, expectedZoom)
+  assert.ok(Math.abs(tx + x * zoom - width / 2) < 0.01)
+  assert.ok(Math.abs(ty + y * zoom - height / 2) < 0.01)
+}
+
+test('Find matches displayed labels, handles duplicates, centers by ID, and preserves edit selection', async (t) => {
+  const app = await launch(t)
+  const fixture = structuredClone(legacyWorkflow)
+  fixture.nodes[0].label = 'Order Review'
+  fixture.nodes[1].label = 'order review'
+  fixture.nodes[1].position = { x: 6100, y: -2200 }
+  await app.open('/find.json', fixture)
+  await app.click('Architect View')
+  await app.click(app.node('webhook'))
+  const before = viewportTransform(app)
+  assert.equal(app.key('f', { ctrlKey: true }), false)
+  await tick()
+  const search = await typeFind(app, '   ReViE   ')
+  assert.equal(search.ownerDocument.activeElement, search)
+  assert.deepEqual(findResults(app).map((row) => row.querySelector('small').textContent), ['1 of 2', '2 of 2'])
+  assert.equal(viewportTransform(app), before)
+  assert.equal(app.key('ArrowUp', {}, search), false)
+  await tick()
+  assert.equal(findResults(app)[1].getAttribute('aria-selected'), 'true')
+  app.key('ArrowDown', {}, search)
+  await tick()
+  assert.equal(findResults(app)[0].id, search.getAttribute('aria-activedescendant'))
+  app.key('ArrowDown', {}, search)
+  app.key('Enter', { repeat: true }, search)
+  assert.equal(findInput(app), search)
+  assert.equal(app.key('Enter', {}, search), false)
+  await tick()
+  assertCentered(app, 6136, -2164, 1)
+  assert.ok(app.node('http').querySelector('.is-find-focused'))
+  assert.equal(app.query('.vue-flow__node.selected'), app.node('webhook'))
+  assert.equal(search.ownerDocument.activeElement, app.button('Find node'))
+
+  await app.click('Find node')
+  await typeFind(app, 'missing')
+  assert.equal(findResults(app).length, 0)
+  assert.match(app.query('#find-node [role="status"]').textContent, /No matching nodes/)
+  app.key('Enter', {}, findInput(app))
+  assert.ok(findInput(app))
+  assert.equal(app.key('Escape', {}, findInput(app)), false)
+  await tick()
+  assert.equal(findInput(app), null)
+  assertCentered(app, 6136, -2164, 1)
+  await app.click('Find node')
+  await app.click(findResults(app)[0])
+  assertCentered(app, 36, 136, 1)
+  assert.equal(app.query('.is-find-focused').closest('.vue-flow__node'), app.node('webhook'))
+  assert.deepEqual(await app.save('/find.json'), fixture)
+})
+
+test('Ctrl+F respects input, IME, picker, active section gestures, connections, and native dialogs', async (t) => {
+  const app = await demo(t)
+  const modifiers = { ctrlKey: true }
+  const notes = app.type('Project summary', 'Uncommitted draft')
+  assert.equal(app.key('f', modifiers, notes), true)
+  for (const control of ['Zoom in', 'Reset zoom to 100%', 'Fit workflow to view', 'Workflow minimap']) {
+    assert.equal(app.mouse(app.button(control), 'mousedown'), false)
+  }
+  await app.click('Zoom out')
+  assert.equal(notes.ownerDocument.activeElement, notes)
+  assert.equal(notes.value, 'Uncommitted draft')
+  assert.equal(app.isDirty(), false)
+  await app.click('Find node')
+  assert.ok(findInput(app))
+  assert.equal(notes.ownerDocument.activeElement, notes)
+  assert.equal(app.mouse(findResults(app)[0], 'mousedown'), false)
+  await app.click(findResults(app)[0])
+  assert.equal(findInput(app), null)
+  assert.equal(notes.ownerDocument.activeElement, notes)
+  assert.equal(app.isDirty(), false)
+  app.key('Escape', {}, notes)
+  notes.blur()
+  assert.equal(app.key('f', modifiers, app.query('.project-name')), true)
+  for (const extra of [{ isComposing: true }, { shiftKey: true }, { altKey: true }, { metaKey: true }]) {
+    assert.equal(app.key('f', { ...modifiers, ...extra }), true)
+  }
+  assert.equal(app.key('k', modifiers), false)
+  await tick()
+  assert.equal(app.key('f', modifiers, app.query('.node-picker input')), true)
+  assert.equal(app.key('f', modifiers, app.button('Close node picker')), true)
+  assert.equal(findInput(app), null)
+  await app.click('Close node picker')
+
+  await app.click('Add Section')
+  const grip = sectionElement(app).querySelector('button')
+  pointer(grip, 'pointerdown', 200, 200)
+  assert.equal(app.key('f', modifiers), true)
+  app.key('Escape')
+  await tick()
+  await app.click(app.handle('webhook', 'out'))
+  assert.equal(app.key('f', modifiers), true)
+  app.key('Escape')
+
+  await app.click('Find node')
+  const completeSave = app.pauseCommand('save_workflow_as')
+  await app.click('Save As…')
+  assert.equal(findInput(app), null)
+  assert.equal(app.button('Find node').disabled, true)
+  assert.equal(app.key('f', modifiers), true)
+  completeSave()
+  await tick()
+  assert.equal(app.key('f', modifiers), false)
+  await tick()
+  assert.ok(findInput(app))
+})
+
+test('minimap tracks sections, nodes and viewport and pans by click or drag without zooming', async (t) => {
+  const app = await launch(t)
+  const fixture = structuredClone(legacyWorkflow)
+  fixture.sections = [stage('far', 'Far stage', -620, 120, 400, 200)]
+  await app.open('/map.json', fixture)
+  const recoveryBefore = app.recoveryWrites.slice()
+  const minimap = app.button('Workflow minimap')
+  const mapElement = (kind) => minimap.querySelector('.minimap-' + kind)
+  const mapRect = (kind) => ['x', 'y', 'width', 'height'].map((attr) => Number(mapElement(kind).getAttribute(attr)))
+  const { left, top } = minimap.getBoundingClientRect()
+
+  assert.equal(app.all('.minimap-node').length, 2)
+  assert.equal(app.all('.minimap-section').length, 1)
+  const firstNode = mapRect('node')
+  const initialViewport = mapRect('viewport')
+  await app.click('Zoom in')
+  assert.ok(mapRect('viewport')[2] < initialViewport[2])
+  const zoom = viewportValues(app)[2]
+  const startX = left + firstNode[0] + firstNode[2] / 2
+  const startY = top + firstNode[1] + firstNode[3] / 2
+  pointer(minimap, 'pointerdown', startX, startY)
+  pointer(minimap, 'pointerup', startX, startY)
+  await tick()
+  assertCentered(app, 36, 136, zoom)
+
+  const section = mapRect('section')
+  const endX = left + section[0] + section[2] / 2
+  const endY = top + section[1] + section[3] / 2
+  pointer(minimap, 'pointerdown', startX, startY)
+  pointer(minimap, 'pointermove', endX, endY)
+  await tick()
+  assertCentered(app, -420, 220, zoom)
+  pointer(minimap, 'pointercancel', endX, endY)
+  pointer(minimap, 'pointermove', startX, startY)
+  await tick()
+  assertCentered(app, -420, 220, zoom)
+  assert.deepEqual(mapRect('node'), firstNode)
+
+  const pane = app.query('.vue-flow__pane')
+  const movedViewport = mapRect('viewport')
+  await app.drag(pane, pane, { clientX: 650, clientY: 440 })
+  assert.notDeepEqual(mapRect('viewport'), movedViewport)
+  await app.drag(pane, pane, { clientX: 2600, clientY: 440 })
+  assert.equal(app.query('.minimap-marker').getAttribute('cx'), '4')
+  minimap.click()
+  await tick()
+  assert.equal(app.query('.minimap-marker'), null)
+  assert.deepEqual(mapRect('viewport'), initialViewport)
+  assert.equal(app.isDirty(), false)
+  assert.deepEqual(app.recoveryWrites, recoveryBefore)
+})
+
+test('fit and reset handle empty, sections-only, and 50-node workflows in a resized canvas', async (t) => {
+  const app = await launch(t)
+  assert.equal(app.button('Workflow minimap'), undefined)
+  await app.click('Find node')
+  assert.match(app.query('#find-node [role="status"]').textContent, /no nodes/)
+  app.key('Escape', {}, findInput(app))
+  await tick()
+  await app.click('Zoom in')
+  assert.notEqual(viewportValues(app)[2], 1)
+  await app.click('Fit workflow to view')
+  assert.deepEqual(viewportValues(app), [0, 0, 1])
+
+  const onlySections = { ...legacyWorkflow, nodes: [], edges: [], sections: [stage('only', 'Only stage', -3000, 950, 450, 250)] }
+  await app.open('/sections.json', onlySections)
+  assert.equal(app.all('.minimap-node').length, 0)
+  assert.equal(app.all('.minimap-section').length, 1)
+  assertCentered(app, -2775, 1075, 1.2)
+
+  const large = largeWorkflowFixture()
+  large.sections.push(stage('away', 'Beyond the graph', -3200, -800, 440, 420))
+  await app.open('/large.json', large)
+  app.resizeCanvas(758, 320)
+  await tick()
+  await app.click('Fit workflow to view')
+  const [x, y, zoom] = viewportValues(app)
+  assert.ok(zoom < 0.25)
+  assert.ok(x - 3200 * zoom >= 0 && x + 6500 * zoom <= 758)
+  assert.ok(y - 800 * zoom >= 0 && y + 350 * zoom <= 320)
+  assert.equal(app.all('.minimap-node').length, 50)
+  assert.equal(app.all('.minimap-section').length, 6)
+  assert.equal(app.all('.vue-flow__edge').length, 61)
+  assert.equal(app.query('#zoom-level').textContent, Math.round(zoom * 100) + '%')
+
+  await app.click('Zoom in')
+  assert.ok(viewportValues(app)[2] > zoom)
+  await app.click('Zoom out')
+  assert.ok(Math.abs(viewportValues(app)[2] - zoom) < 1e-6)
+  await app.click('Reset zoom to 100%')
+  assert.equal(app.query('#zoom-level').textContent, '100%')
+  assertCentered(app, (758 / 2 - x) / zoom, (320 / 2 - y) / zoom, 1)
+  assert.equal(app.button('Undo').disabled, true)
+  assert.equal(app.button('Redo').disabled, true)
+  assert.deepEqual(await app.save('/large.json'), large)
+})
+
+test('client and presentation search preserve exports, project data, dirty state, recovery and history', async (t) => {
+  const app = await launch(t)
+  const fixture = structuredClone(legacyWorkflow)
+  fixture.nodes[1].clientLabel = 'Check orders'
+  fixture.sections = [stage('intake', 'Intake', -50, -150)]
+  await app.open('/navigation.json', fixture)
+  await app.click('Architect View')
+  await app.click(app.node('webhook'))
+  await app.edit('Name', 'Receive orders')
+  await app.edit('Name', 'Extra edit')
+  await app.click('Undo')
+  assert.equal(app.isDirty(), true)
+  assert.equal(app.button('Undo').disabled, false)
+  assert.equal(app.button('Redo').disabled, false)
+  for (const format of ['PNG', 'Markdown']) await app.click('Export ' + format)
+  await app.click('AI Review Prompt')
+  await app.click('Copy Review Prompt')
+  const beforeExports = app.exports.slice()
+  const beforePng = app.raster().scene.outerHTML
+  const beforeReview = app.clipboard.at(-1)
+  await tick(550)
+  const beforeRecovery = app.recoveryWrites.slice()
+
+  await app.click('Client View')
+  const focusZoom = Math.max(1, viewportValues(app)[2])
+  assert.equal(app.key('f', { ctrlKey: true }), false)
+  await tick()
+  await typeFind(app, 'HTTP')
+  assert.equal(findResults(app).length, 0)
+  const search = await typeFind(app, 'orders')
+  assert.equal(findResults(app).length, 2)
+  app.key('ArrowDown', {}, search)
+  app.key('Enter', {}, search)
+  await tick()
+  assert.ok(app.node('http').querySelector('.client-node-card').closest('.is-find-focused'))
+  assertCentered(app, 250, 144, focusZoom)
+
+  await app.click('Present')
+  assert.ok(app.button('Workflow minimap'))
+  assert.equal(app.button('Add Node'), undefined)
+  assert.equal(app.key('k', { ctrlKey: true }), true)
+  assert.equal(app.key('Delete'), true)
+  await app.click('Zoom in')
+  await app.click('Find node')
+  assert.equal(app.key('Escape', {}, findInput(app)), false)
+  await tick()
+  assert.ok(app.query('.is-presenting'))
+  assert.equal(findInput(app), null)
+  assert.equal(app.key('Escape', {}, app.button('Find node')), false)
+  await tick()
+  assert.equal(app.query('.is-presenting'), null)
+  await app.click('Back to Architect View')
+  assert.equal(app.isDirty(), true)
+  assert.equal(app.button('Undo').disabled, false)
+  assert.equal(app.button('Redo').disabled, false)
+  await tick(550)
+  assert.deepEqual(app.recoveryWrites, beforeRecovery)
+  for (const format of ['PNG', 'Markdown']) await app.click('Export ' + format)
+  await app.click('Copy Review Prompt')
+  assert.deepEqual(app.exports.slice(-2), beforeExports)
+  assert.equal(app.raster().scene.outerHTML, beforePng)
+  assert.equal(app.clipboard.at(-1), beforeReview)
+  await app.click('Redo')
+  assert.match(app.node('webhook').textContent, /Extra edit/)
+  await app.click('Undo')
+  fixture.nodes[0].label = 'Receive orders'
+  assert.deepEqual(await app.save('/navigation.json'), fixture)
 })

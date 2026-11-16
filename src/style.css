@@ -60,6 +60,7 @@ h1 { margin: 0; font-size: 25px; font-weight: 500; letter-spacing: -0.9px; line-
 .node-tile { display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; border: 1px solid var(--node-border); border-radius: 17px; background: #292722; color: var(--node-accent); }
 .workflow-node:hover .node-tile { border-color: var(--node-accent); }
 .is-selected .node-tile, .vue-flow__node:focus-visible .node-tile { outline: 2px solid var(--node-accent); outline-offset: 5px; }
+.is-find-focused :is(.node-tile, .client-node-card) { box-shadow: 0 0 0 3px #d3ac74, 0 0 0 7px #d3ac7440; }
 .vue-flow__node:focus-visible { outline: none; }
 .node-label { position: absolute; top: 84px; left: 50%; transform: translateX(-50%); width: 165px; text-align: center; pointer-events: none; }
 .node-label > span { display: block; overflow: hidden; text-overflow: ellipsis; font-size: 12px; font-weight: 550; color: #e0d9ce; white-space: nowrap; }
@@ -74,12 +75,25 @@ h1 { margin: 0; font-size: 25px; font-weight: 500; letter-spacing: -0.9px; line-
 .vue-flow__edge.selected .vue-flow__edgeupdater { pointer-events: all; fill: #3f3528; stroke: var(--accent); stroke-width: 1.2; cursor: grab; }
 .vue-flow__edge.selected .vue-flow__edgeupdater:hover { fill: #7f6747; }
 .vue-flow__connection-path { stroke: var(--accent); stroke-width: 1.8; }
-.vue-flow__panel.canvas-controls { margin: 18px; }
+.vue-flow__panel.canvas-controls { display: grid; justify-items: start; gap: 7px; margin: 14px; max-height: calc(100% - 28px); }
 .viewport-controls { display: flex; align-items: center; gap: 3px; padding: 5px; background: #27251f; border: 1px solid #464036; border-radius: 6px; }
 .viewport-controls button { width: 31px; height: 29px; padding: 0; display: grid; place-items: center; background: transparent; border: none; border-radius: 3px; color: #c2b8a8; }
-.viewport-controls button:hover { background: #3a352d; }
-.viewport-controls output { width: 43px; text-align: center; font-size: 11px; color: #c2b8a8; font-variant-numeric: tabular-nums; }
+.viewport-controls button:hover:not(:disabled), .viewport-controls button[aria-expanded="true"] { background: #3a352d; }
+.viewport-controls .zoom-reset { width: 43px; font-size: 11px; font-variant-numeric: tabular-nums; }
 .control-divider { width: 1px; height: 17px; background: #494238; margin: 0 4px; }
+.workflow-minimap {
+  width: 160px; display: block; padding: 0; overflow: hidden; cursor: crosshair; touch-action: none;
+  background: #211f1b; border: 0; border-radius: 6px; outline: 1px solid #464036;
+}
+.workflow-minimap:hover { background: #28251f; }
+.workflow-minimap svg { display: block; width: 100%; height: auto; pointer-events: none; }
+.minimap-section { fill-opacity: .17; stroke-opacity: .65; stroke-width: 1px; }
+.minimap-viewport { fill: #d3ac7429; stroke: var(--accent); stroke-width: 1px; }
+.minimap-marker { fill: var(--accent); }
+.is-presenting .workflow-minimap { width: 128px; }
+.is-presenting .viewport-controls { background: #27251fea; }
+.find-node { width: 242px; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.find-node .node-options { max-height: 138px; }
 .workspace-footer { min-height: 46px; flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; gap: 16px; font-size: 10px; color: #aaa295; }
 .interaction-hint { display: flex; align-items: center; gap: 7px; }
 .footer-separator { margin: 0 10px; color: #6c6457; }

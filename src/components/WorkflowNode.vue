@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { Handle, Position } from '@vue-flow/core'
-import { defaultNodeColors, nodeColors, nodeIcons, outputPortFraction, workflowHandleSize } from '../data/nodeCatalog'
+import { defaultNodeColors, nodeColors, nodeIcons, outputPortFraction, workflowHandleSize, workflowNodeLabel } from '../data/nodeCatalog'
 import type { WorkflowNodeData } from '../data/nodeCatalog'
 
-const props = defineProps<{ data: WorkflowNodeData; selected: boolean; client: boolean }>()
+const props = defineProps<{ data: WorkflowNodeData; selected: boolean; client: boolean; findFocused: boolean }>()
 
-const displayLabel = computed(() => props.client ? props.data.clientLabel ?? props.data.label : props.data.label)
+const displayLabel = computed(() => workflowNodeLabel(props.data, props.client))
 
 const nodeStyle = computed(() => {
   const color = nodeColors[props.data.color ?? defaultNodeColors[props.data.kind]]
@@ -15,7 +15,7 @@ const nodeStyle = computed(() => {
 </script>
 
 <template>
-  <div class="workflow-node" :class="[`node-${data.kind}`, { 'is-selected': selected && !client }]" :style="nodeStyle">
+  <div class="workflow-node" :class="[`node-${data.kind}`, { 'is-selected': selected && !client, 'is-find-focused': findFocused }]" :style="nodeStyle">
     <div v-if="client" class="client-node-card">
       <div class="client-node-heading">
         <component :is="nodeIcons[data.icon ?? data.kind].icon" :size="19" :stroke-width="1.7" aria-hidden="true" />

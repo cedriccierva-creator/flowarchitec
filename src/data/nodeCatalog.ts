@@ -61,6 +61,10 @@ export interface WorkflowNodeData {
   color?: NodeColor
 }
 
+export function workflowNodeLabel(data: WorkflowNodeData, client: boolean) {
+  return client ? data.clientLabel ?? data.label : data.label
+}
+
 export type WorkflowNode = Node<WorkflowNodeData> & { data: WorkflowNodeData }
 
 export function createWorkflowNode(kind: NodeKind, id: string, position: WorkflowNode['position']): WorkflowNode {

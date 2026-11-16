@@ -1,5 +1,39 @@
 # FlowArchitect verification
 
+## Phase 5C — Canvas Navigation
+
+Started on 2026-11-16 from a clean working tree at `91f9e6f`, after Phase 5B native QA. Navigation uses Vue Flow’s viewport and does not write viewport, search, or highlight state to version 1 workflows.
+
+### Automated checks
+
+| Check | Result |
+| --- | --- |
+| `npm run build` | Passed Vue and TypeScript checks and the Vite production build. |
+| `tests/architect-view.test.cjs` | 47 passed. Five navigation scenarios and all 42 existing regressions. |
+| `cargo test --manifest-path src-tauri/Cargo.toml --locked --offline` | 3 passed. |
+| `CARGO_NET_OFFLINE=true npm run desktop:build -- -- --locked --offline` | Passed. Produced the standalone Linux executable. |
+| `git diff --check` | Passed. |
+
+The production bundle tests use simulated layout and pointer events and mocked Tauri IPC. They verify minimap geometry and viewport tracking, click and drag panning, Find matching and duplicate selection, keyboard and dialog restrictions, empty and sections-only workflows, zoom reset, and Fit View at a reduced canvas size with 50 nodes, 61 edges, and six sections. They also compare saved workflow data, recovery writes, history controls, PNG scene content, Markdown, and AI review prompts across navigation.
+
+```bash
+npm run build
+qa_dir=$(mktemp -d)
+npm install --prefix "$qa_dir" --no-save --no-package-lock jsdom@30.1.3
+NODE_PATH="$qa_dir/node_modules" node tests/architect-view.test.cjs
+```
+
+### Native COSMIC/Wayland checklist
+
+Status **pending**. Launch `./src-tauri/target/release/flowarchitect` or run `npm run desktop:dev` from the COSMIC desktop. Use the existing 50-node, 61-edge Order Operations QA workflow, with several visual sections and at least one section beyond the outermost nodes.
+
+1. **Minimap.** Confirm the dark map shows nodes, section rectangles, and the viewport. Pan the canvas and wheel-zoom to check tracking. Click a distant area on the map and drag across it at two zoom levels. Check that the canvas follows without moving any nodes or changing zoom. Drag past the map edge and release, then move the pointer again to check that tracking has stopped. Pan well clear of the graph and verify the edge indicator helps locate it. Tab to the map and press Enter to fit the workflow.
+2. **Find and focus.** Give two nodes the same label and put them far apart. Press Ctrl+F and type a partial label in mixed case. Use ↑, ↓, Enter, and a pointer click to reach each duplicate. Verify centering, the highlight, focus returning to the Find button, and the same inspector selection as before. Check a query with no matches and dismiss it with Escape. Confirm Ctrl+K opens Add Node. Try Ctrl+F in a project name, inspector note, Add Node, active section drag, and native file dialog. With a note draft focused, click a viewport button, pan on the minimap, then open Find and click a result. Confirm the draft retains focus and the dirty indicator stays the same.
+3. **Zoom and bounds.** Use Zoom In, Zoom Out, the percentage button to reset to 100%, and Fit View. Check both far ends of the 50-node diagram and the distant section after Fit. On a blank project, pan and zoom before Fit and verify it returns to the initial view. Repeat Fit and map panning on a sections-only project.
+4. **Read-only views.** Find a node by its client label in Client View, then exercise the map, Find, and zoom in Presentation Mode. Confirm a focused result cannot be dragged or deleted. Escape closes Find first and exits Presentation Mode on the next press.
+5. **Project state and exports.** On a saved copy, navigate in all three views and check that the dirty indicator and Undo/Redo availability stay the same. Repeat with an unsaved edit and a redo step available. Save and compare workflow JSON for IDs, positions, edges, and sections. Export PNG and Markdown and copy the review prompt before and after navigation. Check the same full diagram, curved edges, section bounds, and documentation, including content outside the current viewport.
+6. **Performance and minimum window.** At 800 × 560, open the large diagram with Architect controls and the AI Review Prompt panel visible. Pan, drag on the minimap, repeatedly zoom and fit, and scroll through Find results. Verify pointer capture, readable controls, usable results and inspector, and responsive canvas painting. Repeat in Client View and Presentation Mode.
+
 ## Phase 5B — Free-positioned visual sections
 
 Started on 2026-11-16 from a clean worktree at `4a781e2`, after all ten Phase 5A native checks passed. The workflow document remains `schemaVersion: 1`. Files and recovery snapshots without the optional `sections` array load with zero sections.

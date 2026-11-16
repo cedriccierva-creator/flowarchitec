@@ -1,13 +1,15 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, shallowRef, watch } from 'vue'
-import { ConnectionLineType, ConnectionMode, MarkerType, Panel, VueFlow, useVueFlow } from '@vue-flow/core'
+import { ConnectionLineType, ConnectionMode, getTransformForBounds, MarkerType, Panel, VueFlow, useVueFlow } from '@vue-flow/core'
 import type { Connection, DefaultEdgeOptions, MouseTouchEvent, XYPosition } from '@vue-flow/core'
-import { Maximize, Minus, MousePointer2, Plus, Redo2, Undo2 } from 'lucide-vue-next'
+import { Maximize, Minus, MousePointer2, Plus, Redo2, Search, Undo2 } from 'lucide-vue-next'
+import FindNode from './FindNode.vue'
 import GraphInspector from './GraphInspector.vue'
 import NodePicker from './NodePicker.vue'
 import VisualSectionLayer from './VisualSectionLayer.vue'
 import WorkflowNode from './WorkflowNode.vue'
-import { architectTile, clientCard, createWorkflowNode } from '../data/nodeCatalog'
+import WorkflowMinimap from './WorkflowMinimap.vue'
+import { architectTile, clientCard, createWorkflowNode, workflowNodeLabel } from '../data/nodeCatalog'
 import type { NodeKind, WorkflowNodeData } from '../data/nodeCatalog'
 import { isDesktop } from '../data/desktop'
 import { reviewModes } from '../data/exportReviewPrompt'
@@ -20,11 +22,11 @@ import type { VisualSection } from '../data/visualSections'
 
 const {
   addEdges, addNodes, addSelectedNodes, connectionClickStartHandle, dimensions, edges, endConnection,
-  findNode, fitBounds, fitView, getNodesInitialized, getSelectedEdges, getSelectedNodes, nodes, onClickConnectStart,
+  findNode, getNodesInitialized, getSelectedEdges, getSelectedNodes, nodes, onClickConnectStart,
   onConnect, onConnectEnd, onConnectStart, onEdgeUpdate,
   onEdgeUpdateEnd, onEdgeUpdateStart, onNodeDragStart, onNodeDragStop, onNodesInitialized, project,
-  removeEdges, removeNodes, removeSelectedElements, screenToFlowCoordinate, setEdges, setNodes, setViewport, updateEdge, updateNode,
-  updateNodeData, updateNodeInternals, viewport, vueFlowRef, zoomIn, zoomOut,
+  removeEdges, removeNodes, removeSelectedElements, screenToFlowCoordinate, setCenter, setEdges, setNodes, setViewport, updateEdge, updateNode,
+  updateNodeData, updateNodeInternals, viewport, vueFlowRef, zoomIn, zoomOut, zoomTo,
 } = useVueFlow()
 
 const projectName = ref(untitled)
@@ -48,12 +50,40 @@ const sectionGesture = ref(false)
 const pickerOpen = ref(false)
 const picker = ref<InstanceType<typeof NodePicker>>()
 const addButton = ref<HTMLButtonElement>()
+const findOpen = ref(false)
+const autofocusFind = ref(true)
+const findButton = ref<HTMLButtonElement>()
+const focusedNodeId = ref<string>()
 const selectedNode = computed(() => getSelectedNodes.value.length === 1 && !getSelectedEdges.value.length
   ? getSelectedNodes.value[0] : undefined)
 const selectedEdge = computed(() => getSelectedEdges.value.length === 1 && !getSelectedNodes.value.length
   ? getSelectedEdges.value[0] : undefined)
-const zoomLabel = computed(() => `${Math.round(viewport.value.zoom * 100)}%`)
-const fitOptions = { padding: 0.28, maxZoom: 1.2 }
+const zoomLabel = computed(() => viewport.value.zoom < 0.01 ? '<1%' : `${Math.round(viewport.value.zoom * 100)}%`)
+const maxZoom = 2
+const tile = computed(() => clientView.value ? clientCard : architectTile)
+const visibleNodes = computed(() => nodes.value.filter(({ hidden }) => !hidden))
+const findEntries = computed(() => visibleNodes.value.map(({ id, data }) => ({ id, label: workflowNodeLabel(data, clientView.value) })))
+const workflowBounds = computed(() => {
+  if (!visibleNodes.value.length && !sections.value.length) return
+  let left = Infinity, top = Infinity, right = -Infinity, bottom = -Infinity
+  function include({ x, y }: XYPosition, width: number, height: number) {
+    left = Math.min(left, x)
+    top = Math.min(top, y)
+    right = Math.max(right, x + width)
+    bottom = Math.max(bottom, y + height)
+  }
+  for (const { position } of visibleNodes.value) include(position, tile.value.width, tile.value.height)
+  for (const { position, width, height } of sections.value) include(position, width, height)
+  return { x: left, y: top, width: right - left, height: bottom - top }
+})
+const fittedViewport = computed(() => {
+  const { width, height } = dimensions.value
+  if (workflowBounds.value && width > 0 && height > 0) {
+    return getTransformForBounds(workflowBounds.value, width, height, Number.EPSILON, 1.2, 0.28)
+  }
+})
+// Keep the usual zoom floor unless Fit View needs a wider overview.
+const minZoom = computed(() => Math.min(0.25, fittedViewport.value?.zoom ?? 0.25, viewport.value.zoom))
 const defaultEdgeOptions: DefaultEdgeOptions = {
   type: 'default', // Vue Flow's built-in cubic Bezier edge.
   animated: false,
@@ -144,6 +174,13 @@ function closePicker(restoreFocus = true) {
 const pickerBlocked = computed(() => busy.value || exporting.value || clientView.value || presenting.value)
 watch(pickerBlocked, (blocked) => { if (blocked) closePicker(false) })
 
+const navigationBlocked = computed(() => busy.value || exporting.value || Boolean(activeNodeDrag.value) || sectionGesture.value)
+watch(() => busy.value || exporting.value, (blocked) => { if (blocked) closeFind(false) })
+
+function canNavigate() {
+  return !navigationBlocked.value && !activeConnection && !reconnectingEdgeId && !connectionClickStartHandle.value
+}
+
 function canUsePicker() {
   return !pickerBlocked.value && !activeNodeDrag.value && !sectionGesture.value && !activeConnection && !reconnectingEdgeId
     && !connectionClickStartHandle.value
@@ -154,19 +191,42 @@ function canEditSection() {
 }
 
 function fitWorkflow() {
-  if (sectionGesture.value) return
-  if (!sections.value.length) return fitView(fitOptions)
-  let left = Infinity, top = Infinity, right = -Infinity, bottom = -Infinity
-  function include({ x, y }: XYPosition, width: number, height: number) {
-    left = Math.min(left, x)
-    top = Math.min(top, y)
-    right = Math.max(right, x + width)
-    bottom = Math.max(bottom, y + height)
+  return setViewport(fittedViewport.value ?? { x: 0, y: 0, zoom: 1 })
+}
+
+function navigate(action: () => unknown) {
+  if (canNavigate()) void action()
+}
+
+function openFind() {
+  if (!canNavigate()) return
+  closePicker(false)
+  autofocusFind.value = !textEntry(document.activeElement)
+  findOpen.value = true
+}
+
+function closeFind(restoreFocus = true) {
+  if (!findOpen.value) return
+  findOpen.value = false
+  const focused = document.activeElement
+  if (restoreFocus && (!textEntry(focused) || focused?.closest('#find-node'))) {
+    findButton.value?.focus({ preventScroll: true })
   }
-  const tile = clientView.value ? clientCard : architectTile
-  for (const { position } of nodes.value) include(position, tile.width, tile.height)
-  for (const { position, width, height } of sections.value) include(position, width, height)
-  return fitBounds({ x: left, y: top, width: right - left, height: bottom - top }, fitOptions)
+}
+
+function focusNode(id: string) {
+  if (!canNavigate()) return
+  const node = findNode(id)
+  if (!node || node.hidden) return
+  const { x, y } = node.position
+  const { width, height } = tile.value
+  void setCenter(x + width / 2, y + height / 2, { zoom: Math.max(1, viewport.value.zoom) })
+  focusedNodeId.value = id
+  closeFind()
+}
+
+function centerMinimap({ x, y }: XYPosition) {
+  navigate(() => setCenter(x, y, { zoom: viewport.value.zoom }))
 }
 
 function selectSection(id: string) {
@@ -178,6 +238,8 @@ function selectSection(id: string) {
 
 function clearCanvasOverlay() {
   closePicker(false)
+  closeFind(false)
+  focusedNodeId.value = undefined
   selectedSectionId.value = undefined
 }
 
@@ -206,6 +268,7 @@ function updateSection(id: string | undefined, changes: Partial<Omit<VisualSecti
 
 function openPicker() {
   if (!canUsePicker()) return
+  closeFind(false)
   if (pickerOpen.value) picker.value?.focusSearch()
   else pickerOpen.value = true
 }
@@ -232,6 +295,7 @@ function switchView() {
 
 function setPresentation(enabled: boolean) {
   if (!clientView.value) return
+  closeFind(false)
   presenting.value = enabled
   void nextTick(() => (enabled ? exitPresentationButton.value : presentButton.value)?.focus())
 }
@@ -323,7 +387,7 @@ function closeInspector() {
 }
 
 function commitDocumentationBeforePointerAction(event: PointerEvent) {
-  if (event.target instanceof Element && event.target.closest('[data-export-action]')) return
+  if (event.target instanceof Element && event.target.closest('[data-export-action], [data-viewport-action]')) return
   const focused = document.activeElement
   // Canvas selection or dragging can take over before the browser moves focus.
   if (event.button === 0 && (focused instanceof HTMLTextAreaElement
@@ -332,9 +396,14 @@ function commitDocumentationBeforePointerAction(event: PointerEvent) {
     && !focused.closest('label')?.contains(event.target)) focused.blur()
 }
 
-function keepExportDraftFocused(event: MouseEvent) {
-  // A pointer export reads the committed project without blurring a pending field edit.
+function keepFieldFocused(event: MouseEvent) {
+  // Clicking the Find field explicitly transfers focus. Other navigation preserves a focused draft.
+  if (event.target instanceof HTMLInputElement && event.target.closest('#find-node')) return
   if (document.activeElement?.matches('input, textarea, select')) event.preventDefault()
+}
+
+function textEntry(target: EventTarget | null) {
+  return target instanceof HTMLElement && (target.isContentEditable || Boolean(target.closest('input, textarea, select')))
 }
 
 function requestExport(action: () => Promise<void>) {
@@ -395,15 +464,29 @@ function onEscape(event: KeyboardEvent) {
 
 function onShortcut(event: KeyboardEvent) {
   if (event.defaultPrevented || event.isComposing) return
+  const key = event.key.toLowerCase()
+  const target = event.target instanceof Element ? event.target : undefined
+  const dialog = target?.closest('[role="dialog"], dialog')
+  if (key === 'f' && event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey) {
+    if (textEntry(event.target) || dialog || pickerOpen.value || !canNavigate()) return
+    event.preventDefault()
+    if (!event.repeat) openFind()
+    return
+  }
   if (event.key === 'Escape') {
-    onEscape(event)
+    if (findOpen.value && (dialog?.id === 'find-node' || (!dialog && !textEntry(event.target)))) {
+      event.preventDefault()
+      event.stopPropagation()
+      closeFind()
+    } else {
+      onEscape(event)
+    }
     return
   }
   if (clientView.value || presenting.value || busy.value || activeNodeDrag.value || sectionGesture.value || activeConnection || reconnectingEdgeId
     || (event.target instanceof HTMLElement
       && (event.target.isContentEditable || event.target.closest('input, textarea, select, .node-picker')))) return
 
-  const key = event.key.toLowerCase()
   if (key === 'k' && event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey) {
     if (!architectView.value || !canUsePicker()) return
     event.preventDefault()
@@ -447,7 +530,7 @@ function applyDocument(document: WorkflowDocument, fit = false) {
   setEdges([])
   setNodes(document.nodes.map(materializeNode))
   setEdges(document.edges.map(materializeEdge))
-  if (fit && !document.nodes.length && !sections.value.length) void setViewport({ x: 0, y: 0, zoom: 1 })
+  if (fit && !fitOnInitialize) void fitWorkflow()
   if (fitOnInitialize) {
     void nextTick(() => {
       updateNodeInternals()
@@ -521,17 +604,17 @@ function applyDocument(document: WorkflowDocument, fit = false) {
         </button>
         <div class="export-actions" role="group" aria-label="Export workflow">
           <button class="reset-button" type="button" data-export-action
-            :disabled="busy || exporting || !isDesktop" @mousedown="keepExportDraftFocused" @click="requestExport(() => exportProject('png'))">
+            :disabled="busy || exporting || !isDesktop" @mousedown="keepFieldFocused" @click="requestExport(() => exportProject('png'))">
             Export PNG
           </button>
           <button class="reset-button" type="button" data-export-action
-            :disabled="busy || exporting || !isDesktop" @mousedown="keepExportDraftFocused" @click="requestExport(() => exportProject('md'))">
+            :disabled="busy || exporting || !isDesktop" @mousedown="keepFieldFocused" @click="requestExport(() => exportProject('md'))">
             Export Markdown
           </button>
         </div>
         <button v-if="showReviewControls" class="reset-button" type="button" data-export-action
           :aria-controls="reviewOpen ? 'review-prompt' : undefined" :aria-expanded="reviewOpen"
-          @mousedown="keepExportDraftFocused" @click="reviewOpen = !reviewOpen">
+          @mousedown="keepFieldFocused" @click="reviewOpen = !reviewOpen">
           AI Review Prompt
         </button>
       </div>
@@ -546,9 +629,9 @@ function applyDocument(document: WorkflowDocument, fit = false) {
           </select>
         </label>
         <button class="reset-button" type="button" data-export-action :disabled="busy || exporting || !isDesktop"
-          @mousedown="keepExportDraftFocused" @click="requestExport(copyReviewPrompt)">Copy Review Prompt</button>
+          @mousedown="keepFieldFocused" @click="requestExport(copyReviewPrompt)">Copy Review Prompt</button>
         <button class="reset-button" type="button" data-export-action :disabled="busy || exporting || !isDesktop"
-          @mousedown="keepExportDraftFocused" @click="requestExport(saveReviewPrompt)">Save Review Prompt as Markdown</button>
+          @mousedown="keepFieldFocused" @click="requestExport(saveReviewPrompt)">Save Review Prompt as Markdown</button>
       </div>
       <p class="review-prompt-note">
         Generated locally. You choose where to submit the prompt.
@@ -592,8 +675,8 @@ function applyDocument(document: WorkflowDocument, fit = false) {
         :nodes-focusable="!clientView"
         :edges-focusable="!clientView"
         :disable-keyboard-a11y="clientView"
-        :min-zoom="0.25"
-        :max-zoom="2"
+        :min-zoom="minZoom"
+        :max-zoom="maxZoom"
         :delete-key-code="null"
         :zoom-on-double-click="false"
         @pane-click="clearCanvasOverlay"
@@ -601,7 +684,10 @@ function applyDocument(document: WorkflowDocument, fit = false) {
         @edge-click="clearCanvasOverlay"
       >
         <template #node-workflow="nodeProps">
-          <WorkflowNode :data="nodeProps.data" :selected="nodeProps.selected" :client="clientView" />
+          <WorkflowNode
+            :data="nodeProps.data" :selected="nodeProps.selected" :client="clientView"
+            :find-focused="nodeProps.id === focusedNodeId"
+          />
         </template>
 
         <template #zoom-pane>
@@ -642,18 +728,34 @@ function applyDocument(document: WorkflowDocument, fit = false) {
           </button>
         </Panel>
 
-        <Panel position="bottom-left" class="canvas-controls">
-          <div class="viewport-controls" role="group" aria-label="Canvas view">
-            <button type="button" aria-label="Zoom out" title="Zoom out" @click="zoomOut()">
+        <Panel position="bottom-left" class="canvas-controls nopan nowheel nokey">
+          <FindNode v-if="findOpen" :nodes="findEntries" :autofocus="autofocusFind" data-viewport-action
+            @mousedown="keepFieldFocused" @focus="focusNode" @close="closeFind()" />
+          <WorkflowMinimap
+            v-else-if="workflowBounds" :bounds="workflowBounds" :nodes="visibleNodes" :sections="sections"
+            :tile="tile" :viewport="viewport" :dimensions="dimensions" :disabled="navigationBlocked"
+            data-viewport-action @mousedown="keepFieldFocused" @center="centerMinimap" @fit="navigate(fitWorkflow)"
+          />
+          <div class="viewport-controls" role="group" aria-label="Canvas view" data-viewport-action @mousedown="keepFieldFocused">
+            <button type="button" aria-label="Zoom out" title="Zoom out" :disabled="navigationBlocked" @click="navigate(zoomOut)">
               <Minus :size="16" aria-hidden="true" />
             </button>
-            <output aria-label="Zoom level">{{ zoomLabel }}</output>
-            <button type="button" aria-label="Zoom in" title="Zoom in" @click="zoomIn()">
+            <button class="zoom-reset" type="button" aria-label="Reset zoom to 100%" title="Reset zoom to 100%" aria-describedby="zoom-level"
+              :disabled="navigationBlocked" @click="navigate(() => zoomTo(1))">
+              <span id="zoom-level">{{ zoomLabel }}</span>
+            </button>
+            <button type="button" aria-label="Zoom in" title="Zoom in" :disabled="navigationBlocked" @click="navigate(zoomIn)">
               <Plus :size="16" aria-hidden="true" />
             </button>
             <span class="control-divider" aria-hidden="true"></span>
-            <button type="button" aria-label="Fit workflow to view" title="Fit workflow to view" @click="fitWorkflow">
+            <button type="button" aria-label="Fit workflow to view" title="Fit workflow to view" :disabled="navigationBlocked"
+              @click="navigate(fitWorkflow)">
               <Maximize :size="15" aria-hidden="true" />
+            </button>
+            <button ref="findButton" type="button" aria-label="Find node" title="Find node (Ctrl+F)" aria-keyshortcuts="Control+F"
+              aria-haspopup="dialog" :aria-expanded="findOpen" :aria-controls="findOpen ? 'find-node' : undefined"
+              :disabled="navigationBlocked" @click="findOpen ? closeFind() : openFind()">
+              <Search :size="15" aria-hidden="true" />
             </button>
           </div>
         </Panel>

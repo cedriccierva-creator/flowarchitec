@@ -59,7 +59,13 @@ Network access to npm and Rust crate sources is needed for a fresh build. The co
 - Drag an output port to an input port, or click the two ports in order. Router exposes separate Success and Error outputs. Webhook has only an output.
 - Select an edge to edit or clear its label. Drag either highlighted endpoint to a compatible port to reconnect it. Reconnecting keeps the edge’s label.
 - Press Delete or Backspace to remove the selection. Removing a node also removes its connections. Those keys edit text normally in a field. Escape cancels a connection gesture or node drag, discards uncommitted text, or closes the picker or inspector.
-- Scroll or pinch to zoom, drag empty canvas to pan, or use the view controls at bottom left.
+
+## Canvas Navigation
+
+- Scroll or pinch to zoom and drag empty canvas to pan. The bottom-left controls zoom in or out, reset to 100% when you click the percentage, and fit the whole workflow. Fit includes visual sections and zooms out further for wide diagrams. On an empty canvas, Fit restores the default viewport.
+- The minimap shows nodes, section outlines, and the current viewport. A dot at the edge indicates the viewport has moved beyond the map. Click or drag on the map to pan at the current zoom. With the minimap focused, press Enter to fit the workflow.
+- Press **Ctrl+F** or click **Find node** to search existing nodes by their displayed label, ignoring case. Duplicate labels are numbered in workflow order. Use **↑** or **↓** to move through results, **Enter** or a click to center and highlight the result, and **Escape** to close Find. A match brings the zoom up to at least 100% and leaves the edit selection and project history intact.
+- Find uses client labels in Client View and Presentation Mode, with the same technical-label fallback as the canvas. While a text field or dialog has focus, Ctrl+F stays available to that control or the system. **Ctrl+K** still opens Add Node in Architect View.
 
 ## Architect View
 
@@ -80,7 +86,7 @@ Network access to npm and Rust crate sources is needed for a fresh build. The co
 
 - Turn on **Architect View** and select a node. In the inspector’s **Client View** section, enter a **Client label** and **Business description**. Tab or click away to commit each field. Escape restores its last committed text. Duplicating a node copies both fields.
 - Click **Client View** in the toolbar to see the read-only diagram. The larger cards use the client label when available and the technical name otherwise. Long labels and descriptions show up to two lines each. Hover over either field to read the full text. Ports, edge labels, and editing controls are hidden. Click **Back to Architect View** to edit or manage project files.
-- Click **Present** to give the diagram the full app content area. Pan, zoom, and **Fit workflow to view** work in both client modes. Click **Exit Presentation** or press Escape to return to Client View. View changes preserve the current viewport and leave project history intact.
+- Click **Present** to give the diagram the full app content area. The minimap, Find, and zoom controls remain available. Click **Exit Presentation** or press Escape to return to Client View. When Find is open, Escape closes Find first. View changes preserve the current viewport and leave project history intact.
 - Cards keep their Architect canvas coordinates. Closely spaced nodes may overlap in Client View. Adjust their spacing in Architect View when preparing a diagram for presentation.
 
 ## Export
@@ -117,6 +123,7 @@ Native file, recovery, and export actions are available in the Linux Tauri app. 
 | --- | --- |
 | `src/App.vue` | Minimal application frame |
 | `src/components/WorkflowCanvas.vue` | Vue Flow state, project and recovery controls, and keyboard shortcuts |
+| `src/components/WorkflowMinimap.vue`, `src/components/FindNode.vue` | Viewport map and search for existing nodes |
 | `src/composables/useWorkflowSession.ts` | Active project, unsaved state, history, and recovery scheduling |
 | `src/data/workflowDocument.ts`, `src/data/desktop.ts` | Workflow schema, validation, and Tauri command bridge |
 | `src/data/exportPng.ts`, `src/data/exportMarkdown.ts` | Client diagram rasterization and architecture documentation formatting |
@@ -130,7 +137,7 @@ Native file, recovery, and export actions are available in the Linux Tauri app. 
 | `public/` | Local SVG app mark and dot pattern |
 | `src-tauri/` | Tauri shell, GTK file dialogs, atomic file writes, and local recovery storage |
 | `scripts/check-prerequisites.mjs` | Read-only environment diagnostic |
-| `tests/architect-view.test.cjs` | Production bundle tests for editing, quick add, persistence, and exports with simulated input and mocked Tauri commands |
+| `tests/architect-view.test.cjs` | Production bundle tests for editing, canvas navigation, persistence, and exports with simulated input and mocked Tauri commands |
 | `docs/verification.md` | Actual check results and desktop acceptance checklist |
 
 Runtime frontend dependencies: **Vue 3** for UI, **@vue-flow/core** for canvas behavior, **lucide-vue-next** for icons. Development dependencies: **Vite**, **@vitejs/plugin-vue**, **TypeScript**, **vue-tsc**, **@types/node**, and **@tauri-apps/cli**. Rust dependencies include **tauri**, **tauri-build**, and a direct Linux reference to **gtk**, which Tauri already uses and had locked. No npm packages or Rust crate versions were added.

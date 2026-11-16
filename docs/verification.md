@@ -1,5 +1,44 @@
 # FlowArchitect verification
 
+## Phase 3A — Architect View and Technical Documentation
+
+Checked on 2026-11-16. The worktree started clean at `243792e`.
+
+### Automated checks
+
+| Check | Result |
+| --- | --- |
+| `npm run doctor` | Passed. The available toolchain and Linux build prerequisites were detected. |
+| `npm run build` | Passed. Vue/TypeScript checks and the production bundle completed. |
+| `cargo test --manifest-path src-tauri/Cargo.toml --locked --offline` | 2 passed. Native file storage and recovery ID unit tests. |
+| `cargo build --manifest-path src-tauri/Cargo.toml --locked --offline --features tauri/custom-protocol` | Passed. Built the Linux executable with embedded frontend assets. |
+| `tests/architect-view.test.cjs` | 12 passed. The suite loads the production bundle in jsdom with simulated canvas geometry and Tauri commands in memory. It covers node, edge, and overview edits, Save/Save As/Open, Phase 2B files, independent copies and deletion, history, recovery and normal-close flush, dirty state, text shortcut handling, edge reconnection, and malformed notes. |
+| Phase 2B session and canvas smoke harnesses | 30 additional checks passed. Covered existing project actions, graph edits, drag, connection gestures, zoom, pan, and fit with mocked IPC and geometry. |
+
+To run the Architect View suite using Node 22.23.3, install the pinned test helper in a temporary directory:
+
+```bash
+npm run build
+qa_dir=$(mktemp -d)
+npm install --prefix "$qa_dir" --no-save --no-package-lock jsdom@30.1.3
+NODE_PATH="$qa_dir/node_modules" node tests/architect-view.test.cjs
+```
+
+### Manual COSMIC/Wayland checklist
+
+The sandbox denied Vite's bind to `127.0.0.1:1420` with `EPERM`. The executable with embedded assets also failed to initialize GTK there. Verify the window, WebKitGTK rendering, platform input, and native dialogs from a COSMIC desktop terminal:
+
+```bash
+cd /home/cedric/projects/flowarchitect && npm run desktop:dev
+```
+
+1. Load the demo and toggle **Architect View**. With the canvas unselected, fill in the four project overview fields. Select a node and fill in all five node note fields. Select a connection, add a multiline technical description, and set a visible label. Confirm the canvas still shows compact nodes and curved, labeled connections.
+2. Shrink the window to its minimum size. Scroll the inspector to its last field and action buttons, resize a textarea, and verify that scrolling in the inspector and zooming on the canvas work independently. Pan or move a node while the inspector is open.
+3. While typing a note, confirm Enter inserts a new line and Backspace, Delete, Ctrl+Z, Ctrl+Shift+Z, and Ctrl+Y affect only text editing. Press Escape to revert a draft. Commit an edit with Tab, then use graph undo and redo. Check that one graph undo reverses the whole field edit and that returning to the saved checkpoint clears **Unsaved changes**.
+4. Duplicate a documented node and change the copy’s notes. Check the original, delete it, and undo the deletion to restore its notes and incident connection descriptions. Reconnect a documented connection at both ends and verify its label and description follow it.
+5. Save with a note field still focused. Reopen the saved file and check all three documentation scopes. Save As to a second file and reopen it. Open a Phase 2B JSON file and verify its notes start empty and graph contents are intact. Try opening a copied JSON file with a numeric node purpose and confirm the current project stays open and an error appears.
+6. Edit a note, keep its field focused, and close the window normally. Relaunch, choose **Restore as unsaved**, and verify the note and dirty state. To test recovery after abrupt exit with a throwaway project, commit a note, wait for the recovery write, and terminate the app. Relaunch and verify the committed notes.
+
 ## Phase 2B — Persistence and Undo/Redo
 
 Checked on 2026-11-16 from a clean worktree at `08fa172`.

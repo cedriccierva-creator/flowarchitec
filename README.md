@@ -1,6 +1,6 @@
 # FlowArchitect
 
-A small Tauri 2 + Vue 3 desktop canvas for planning n8n and Make automations. Phase 2B adds local project files, recovery snapshots, and undo/redo to Canvas Lab.
+A small Tauri 2 + Vue 3 desktop canvas for planning n8n and Make automations. Phase 3A adds Architect View for documenting the design alongside the workflow graph.
 
 ## Run
 
@@ -59,11 +59,19 @@ Network access to npm and Rust crate sources is needed for a fresh build. The co
 - Press Delete or Backspace to remove the selection. Removing a node also removes its connections. Those keys edit text normally in a field. Escape cancels a connection gesture or node drag, discards uncommitted text, or closes the picker or inspector.
 - Scroll or pinch to zoom, drag empty canvas to pan, or use the view controls at bottom left.
 
+## Architect View
+
+- Turn on **Architect View** in the toolbar. Select a node to edit its purpose, inputs, outputs, configuration notes, and error-handling strategy. Node duplicates have independent copies of those notes. Deleting a node deletes its notes and its connections’ descriptions.
+- Select a connection to write its technical description, such as a data contract, routing condition, or fallback. The **Label** field controls the canvas label. Reconnecting either endpoint keeps both fields.
+- Click empty canvas to edit the **Project overview**, which holds the summary, architecture goals, assumptions, and constraints.
+- Notes accept multiline plain text. Tab or click away to commit one field edit to project history. **Escape** in a note restores its last committed text. Inside the field, Enter inserts a line break, and the usual text-editing shortcuts apply. Save, project switches, and normal window close also commit a focused note.
+- Recovery captures committed notes after the usual 500 ms delay. A forced exit can lose text still being edited in a focused field or committed too recently for the snapshot to finish.
+
 ## Project files, recovery, and history
 
 - The app starts with an empty workflow. Click the project title to rename it. **New Project** resets the graph and project name. **Load demo** starts a separate workflow with the original five nodes and four edges. Switching away from unsaved changes requires confirmation.
 - **Save** writes to the current file, or prompts for a location on the first save. **Save As…** chooses a destination, and **Open…** validates a local workflow before switching. The canvas footer shows the current filename and unsaved status. Hover over it for the full path.
-- Workflow JSON uses `schemaVersion: 1` and stores the project name, nodes, positions, icons, colors, connections, and labels. Files must be UTF-8 and at most 8 MiB. Saving writes a temporary file beside the destination and atomically renames it into place on Linux.
+- Workflow JSON uses `schemaVersion: 1` and stores the project name, nodes, positions, icons, colors, connections, and labels. Documentation is optional under `metadata.overview`, `nodes[].documentation`, and `edges[].description`. Phase 2B files open with empty fields. Blank notes are omitted on save. Each note supports up to 8,000 UTF-16 code units. Files must be UTF-8 and at most 8 MiB. Saving writes a temporary file beside the destination and atomically renames it into place on Linux.
 - Unsaved edits are written after 500 ms of inactivity to snapshots under Tauri's application-data `recovery` folder. On Linux this is normally `~/.local/share/io.flowarchitect.desktop/recovery/`. Switching projects or closing the window flushes pending edits. Snapshots are offered at startup. **Restore as unsaved** loads a copy that needs an explicit file destination, and **Discard snapshot** permanently removes the selected snapshot after confirmation.
 - **Ctrl+Z** undoes an edit. **Ctrl+Shift+Z** and **Ctrl+Y** redo. The workspace keeps up to 80 undo steps in memory per open workflow. A drag counts as one step, and text fields keep their own editing shortcuts.
 
@@ -79,11 +87,13 @@ Native file and recovery actions are available in the Linux Tauri app. The brows
 | `src/data/workflowDocument.ts`, `src/data/desktop.ts` | Workflow schema, validation, and Tauri command bridge |
 | `src/components/WorkflowNode.vue` | Reusable icon tile, label, and handles |
 | `src/components/NodePicker.vue`, `src/components/GraphInspector.vue` | Searchable picker and contextual editing |
+| `src/components/DocumentationField.vue` | Multiline text editing and blur commits |
 | `src/data/nodeCatalog.ts`, `src/data/sampleWorkflow.ts`, `src/data/workflowGraph.ts` | Node definitions, demo graph, connection validation, and node placement |
 | `src/style.css` | Plain CSS, warm charcoal theme |
 | `public/` | Local SVG app mark and dot pattern |
 | `src-tauri/` | Tauri shell, GTK file dialogs, atomic file writes, and local recovery storage |
 | `scripts/check-prerequisites.mjs` | Read-only environment diagnostic |
+| `tests/architect-view.test.cjs` | Production bundle tests with simulated input and mocked Tauri commands |
 | `docs/verification.md` | Actual check results and desktop acceptance checklist |
 
 Runtime frontend dependencies: **Vue 3** for UI, **@vue-flow/core** for canvas behavior, **lucide-vue-next** for icons. Development dependencies: **Vite**, **@vitejs/plugin-vue**, **TypeScript**, **vue-tsc**, **@types/node**, and **@tauri-apps/cli**. Rust dependencies include **tauri**, **tauri-build**, and a direct Linux reference to **gtk**, which Tauri already uses and had locked. No npm packages or Rust crate versions were added.
@@ -92,7 +102,7 @@ The frontend structure is adapted from the official cached `create-vite` Vue/Typ
 
 ## Verification
 
-The [verification notes](docs/verification.md) record the Phase 2B automated results and the remaining COSMIC/Wayland desktop checks.
+The [verification notes](docs/verification.md) record the automated results, test commands, and Phase 3A COSMIC/Wayland checklist.
 
 ## Official references
 

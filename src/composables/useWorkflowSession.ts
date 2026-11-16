@@ -105,7 +105,7 @@ export function useWorkflowSession(
   async function run(action: () => Promise<void>) {
     if (busy.value || gestureInProgress()) return
     const focused = document.activeElement
-    if (focused instanceof HTMLInputElement) focused.blur()
+    if (focused instanceof HTMLInputElement || focused instanceof HTMLTextAreaElement) focused.blur()
     notice.value = ''
     recordEdit()
     busy.value = true

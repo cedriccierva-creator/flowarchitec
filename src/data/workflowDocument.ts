@@ -4,8 +4,18 @@ import type { NodeColor, NodeIcon, NodeKind, WorkflowNode } from './nodeCatalog'
 import { createSampleEdges, createSampleNodes, errorEdgeStyle } from './sampleWorkflow'
 import { canConnect } from './workflowGraph'
 
+export const overviewFields = ['summary', 'goals', 'assumptions', 'constraints'] as const
+export const nodeDocumentationFields = ['purpose', 'inputs', 'outputs', 'configuration', 'errorHandling'] as const
+export const documentationLimit = 8_000
+
+export type OverviewField = typeof overviewFields[number]
+export type NodeDocumentationField = typeof nodeDocumentationFields[number]
+export type ProjectOverview = Partial<Record<OverviewField, string>>
+export type NodeDocumentation = Partial<Record<NodeDocumentationField, string>>
+
 interface ProjectMetadata {
   name: string
+  overview?: ProjectOverview
 }
 
 interface DocumentNode {
@@ -15,6 +25,7 @@ interface DocumentNode {
   label: string
   icon?: NodeIcon
   color?: NodeColor
+  documentation?: NodeDocumentation
 }
 
 interface DocumentEdge {
@@ -25,6 +36,7 @@ interface DocumentEdge {
   targetHandle: string
   label?: string
   appearance?: 'error'
+  description?: string
 }
 
 export interface WorkflowDocument {
@@ -36,24 +48,32 @@ export interface WorkflowDocument {
 
 export const untitled = 'Untitled workflow'
 
-export function captureWorkflow(name: string, nodes: readonly WorkflowNode[], edges: readonly Edge[]): WorkflowDocument {
+export function captureWorkflow(
+  metadata: ProjectMetadata,
+  nodes: readonly WorkflowNode[],
+  edges: readonly Edge[],
+  nodeDocumentation?: ReadonlyMap<string, NodeDocumentation>,
+  edgeDescriptions?: ReadonlyMap<string, string>,
+): WorkflowDocument {
   return {
     schemaVersion: 1,
-    metadata: { name },
+    metadata: { name: metadata.name, overview: readNotes(metadata.overview, overviewFields) },
     nodes: nodes.map(({ id, position, data }) => ({
       id, kind: data.kind, position: { x: position.x, y: position.y }, label: data.label,
       icon: data.icon, color: data.color,
+      documentation: readNotes(nodeDocumentation?.get(id), nodeDocumentationFields),
     })),
     edges: edges.map(({ id, source, sourceHandle, target, targetHandle, label, style }) => ({
       id, source, sourceHandle: sourceHandle!, target, targetHandle: targetHandle!,
       label: typeof label === 'string' && label ? label : undefined,
       appearance: typeof style === 'object' && style.stroke === errorEdgeStyle.stroke ? 'error' : undefined,
+      description: edgeDescriptions?.get(id),
     })),
   }
 }
 
 export function demoWorkflow() {
-  return captureWorkflow('From event to action', createSampleNodes(), createSampleEdges())
+  return captureWorkflow({ name: 'From event to action' }, createSampleNodes(), createSampleEdges())
 }
 
 export function materializeNode(node: DocumentNode): WorkflowNode {
@@ -62,18 +82,38 @@ export function materializeNode(node: DocumentNode): WorkflowNode {
   return result
 }
 
-export function materializeEdge({ appearance, ...edge }: DocumentEdge): Edge {
-  return { ...edge, style: appearance === 'error' ? { ...errorEdgeStyle } : undefined }
+export function materializeEdge(edge: DocumentEdge): Edge {
+  const { id, source, sourceHandle, target, targetHandle, label, appearance } = edge
+  return { id, source, sourceHandle, target, targetHandle, label, style: appearance === 'error' ? { ...errorEdgeStyle } : undefined }
 }
 
-function asRecord(value: unknown): Record<string, unknown> {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid workflow structure.')
+function asRecord(value: unknown, message = 'Invalid workflow structure.'): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(message)
   return value as Record<string, unknown>
 }
 
 function boundedText(value: unknown, max: number): string {
   if (typeof value !== 'string' || !value.trim() || value.length > max) throw new Error('Invalid workflow text.')
   return value
+}
+
+export function readDocumentationText(value: unknown): string | undefined {
+  if (value === undefined) return undefined
+  if (typeof value !== 'string') throw new Error('Documentation must contain plain text.')
+  const normalized = value.replace(/\r\n?/g, '\n')
+  if (normalized.length > documentationLimit) throw new Error(`Documentation fields are limited to ${documentationLimit} characters.`)
+  return normalized.trim() ? normalized : undefined
+}
+
+function readNotes<K extends string>(value: unknown, fields: readonly K[]): Partial<Record<K, string>> | undefined {
+  if (value === undefined) return undefined
+  const raw = asRecord(value, 'Invalid documentation structure.')
+  const notes: Partial<Record<K, string>> = {}
+  for (const field of fields) {
+    const note = readDocumentationText(raw[field])
+    if (note !== undefined) notes[field] = note
+  }
+  return Object.keys(notes).length ? notes : undefined
 }
 
 function coordinate(value: unknown): number {
@@ -97,7 +137,9 @@ export function parseWorkflow(json: string): WorkflowDocument {
   if (raw.schemaVersion !== 1) throw new Error('Unsupported workflow schema version.')
   if (!Array.isArray(raw.nodes) || !Array.isArray(raw.edges)) throw new Error('The workflow is missing nodes or connections.')
 
-  const name = boundedText(asRecord(raw.metadata).name, 100)
+  const metadata = asRecord(raw.metadata)
+  const name = boundedText(metadata.name, 100)
+  const overview = readNotes(metadata.overview, overviewFields)
   const ids = new Set<string>()
   function uniqueId(value: unknown) {
     const id = boundedText(value, 128)
@@ -117,6 +159,7 @@ export function parseWorkflow(json: string): WorkflowDocument {
       label: boundedText(node.label, 80),
       icon: node.icon === undefined ? undefined : catalogKey(nodeIcons, node.icon),
       color: node.color === undefined ? undefined : catalogKey(nodeColors, node.color),
+      documentation: readNotes(node.documentation, nodeDocumentationFields),
     }
   })
   const nodesById = new Map(nodes.map((node) => [node.id, materializeNode(node)]))
@@ -141,7 +184,8 @@ export function parseWorkflow(json: string): WorkflowDocument {
       id: uniqueId(edge.id), ...connection,
       label: edge.label === undefined ? undefined : boundedText(edge.label, 48),
       appearance,
+      description: readDocumentationText(edge.description),
     }
   })
-  return { schemaVersion: 1, metadata: { name }, nodes, edges }
+  return { schemaVersion: 1, metadata: { name, overview }, nodes, edges }
 }

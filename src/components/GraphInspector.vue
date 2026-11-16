@@ -1,17 +1,45 @@
 <script setup lang="ts">
 import type { GraphEdge, GraphNode } from '@vue-flow/core'
 import { Copy, Trash2, X } from 'lucide-vue-next'
+import DocumentationField from './DocumentationField.vue'
 import { nodeColors, nodeIcons } from '../data/nodeCatalog'
 import type { NodeColor, NodeIcon, WorkflowNodeData } from '../data/nodeCatalog'
+import { nodeDocumentationFields, overviewFields } from '../data/workflowDocument'
+import type { NodeDocumentation, NodeDocumentationField, OverviewField, ProjectOverview } from '../data/workflowDocument'
 
-const props = defineProps<{ node?: GraphNode<WorkflowNodeData>; edge?: GraphEdge }>()
+const props = defineProps<{
+  node?: GraphNode<WorkflowNodeData>
+  edge?: GraphEdge
+  architect: boolean
+  nodeDocumentation?: NodeDocumentation
+  edgeDescription?: string
+  overview?: ProjectOverview
+}>()
 const emit = defineEmits<{
   close: []
   updateNode: [data: Partial<WorkflowNodeData>]
   updateLabel: [label: string]
+  updateNodeDocumentation: [field: NodeDocumentationField, value: string | undefined]
+  updateEdgeDescription: [value: string | undefined]
+  updateOverview: [field: OverviewField, value: string | undefined]
   duplicate: []
   delete: []
 }>()
+
+const nodeFields = {
+  purpose: { label: 'Purpose', placeholder: 'What does this step do?' },
+  inputs: { label: 'Inputs', placeholder: 'Expected data, format, or source' },
+  outputs: { label: 'Outputs', placeholder: 'Data or side effects this step produces' },
+  configuration: { label: 'Configuration notes', placeholder: 'Settings, mappings, or dependencies' },
+  errorHandling: { label: 'Error-handling strategy', placeholder: 'Retries, fallback, or escalation' },
+} satisfies Record<NodeDocumentationField, { label: string; placeholder: string }>
+
+const projectFields = {
+  summary: { label: 'Project summary', placeholder: 'What does the workflow do?' },
+  goals: { label: 'Architecture goals', placeholder: 'What should this design achieve?' },
+  assumptions: { label: 'Assumptions', placeholder: 'What is expected to hold true?' },
+  constraints: { label: 'Constraints', placeholder: 'Limits on tools, time, or resources' },
+} satisfies Record<OverviewField, { label: string; placeholder: string }>
 
 function rename(event: Event) {
   const input = event.target as HTMLInputElement
@@ -41,9 +69,12 @@ function commitInput(event: KeyboardEvent) {
 </script>
 
 <template>
-  <div class="editor-popover graph-inspector nopan nowheel" role="region" :aria-label="node ? 'Edit node' : 'Edit connection'">
+  <div
+    class="editor-popover graph-inspector nopan nowheel" :class="{ 'architect-inspector': architect }"
+    role="region" aria-labelledby="graph-inspector-title"
+  >
     <header class="editor-heading">
-      <h2>{{ node ? 'Edit node' : 'Edit connection' }}</h2>
+      <h2 id="graph-inspector-title">{{ node ? 'Edit node' : edge ? 'Edit connection' : 'Project overview' }}</h2>
       <button class="editor-close" type="button" aria-label="Close inspector" @click="emit('close')">
         <X :size="15" aria-hidden="true" />
       </button>
@@ -78,7 +109,28 @@ function commitInput(event: KeyboardEvent) {
       </label>
       <p class="editor-hint">Drag either highlighted endpoint to reconnect.</p>
     </template>
-    <div class="editor-actions">
+    <template v-if="architect">
+      <template v-if="node">
+        <h3 class="editor-section-title">Technical documentation</h3>
+        <DocumentationField
+          v-for="field in nodeDocumentationFields" :key="field"
+          v-bind="nodeFields[field]" :value="nodeDocumentation?.[field]"
+          @commit="emit('updateNodeDocumentation', field, $event)"
+        />
+      </template>
+      <DocumentationField
+        v-else-if="edge" label="Technical description" placeholder="Data contract, routing condition, or fallback"
+        :value="edgeDescription" @commit="emit('updateEdgeDescription', $event)"
+      />
+      <template v-else>
+        <DocumentationField
+          v-for="field in overviewFields" :key="field"
+          v-bind="projectFields[field]" :value="overview?.[field]"
+          @commit="emit('updateOverview', field, $event)"
+        />
+      </template>
+    </template>
+    <div v-if="node || edge" class="editor-actions">
       <button v-if="node" class="reset-button" type="button" @click="emit('duplicate')">
         <Copy :size="13" aria-hidden="true" />Duplicate
       </button>

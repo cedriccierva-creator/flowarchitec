@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, shallowRef } from 'vue'
 import { ConnectionLineType, ConnectionMode, MarkerType, Panel, VueFlow, useVueFlow } from '@vue-flow/core'
 import type { Connection, DefaultEdgeOptions, MouseTouchEvent, XYPosition } from '@vue-flow/core'
 import { Maximize, Minus, MousePointer2, Plus, Redo2, Undo2 } from 'lucide-vue-next'
@@ -10,7 +10,7 @@ import { createWorkflowNode } from '../data/nodeCatalog'
 import type { NodeKind, WorkflowNodeData } from '../data/nodeCatalog'
 import { isDesktop } from '../data/desktop'
 import { captureWorkflow, materializeEdge, materializeNode, untitled } from '../data/workflowDocument'
-import type { WorkflowDocument } from '../data/workflowDocument'
+import type { NodeDocumentation, NodeDocumentationField, OverviewField, ProjectOverview, WorkflowDocument } from '../data/workflowDocument'
 import { useWorkflowSession } from '../composables/useWorkflowSession'
 import { canConnect, findNodePosition } from '../data/workflowGraph'
 
@@ -24,6 +24,10 @@ const {
 } = useVueFlow()
 
 const projectName = ref(untitled)
+const architectView = ref(false)
+const overview = shallowRef<ProjectOverview>()
+const nodeDocumentation = reactive(new Map<string, NodeDocumentation>())
+const edgeDescriptions = reactive(new Map<string, string>())
 const pickerOpen = ref(false)
 const addButton = ref<HTMLButtonElement>()
 const selectedNode = computed(() => getSelectedNodes.value.length === 1 && !getSelectedEdges.value.length
@@ -55,7 +59,9 @@ const {
   busy, notice, recoveryError, recoveries, showRecovery, dirty, filePath, fileName, canUndo, canRedo,
   recordEdit, undo, redo, newProject, openProject, saveProject, restore, discardRecovery,
 } = useWorkflowSession(
-  () => captureWorkflow(projectName.value, nodes.value, edges.value),
+  () => captureWorkflow(
+    { name: projectName.value, overview: overview.value }, nodes.value, edges.value, nodeDocumentation, edgeDescriptions,
+  ),
   applyDocument,
   () => Boolean(activeNodeDrag.value),
 )
@@ -111,7 +117,7 @@ function closePicker(restoreFocus = true) {
   if (restoreFocus) addButton.value?.focus()
 }
 
-async function addNode(kind: NodeKind, copy?: WorkflowNodeData, preferred?: XYPosition) {
+async function addNode(kind: NodeKind, copy?: WorkflowNodeData, preferred?: XYPosition, documentation?: NodeDocumentation) {
   const position = findNodePosition(viewport.value, dimensions.value, nodes.value, preferred)
   const node = createWorkflowNode(kind, nextId('node'), position)
   if (copy) {
@@ -120,6 +126,7 @@ async function addNode(kind: NodeKind, copy?: WorkflowNodeData, preferred?: XYPo
   closePicker(false)
   removeSelectedElements()
   addNodes(node)
+  if (documentation) nodeDocumentation.set(node.id, { ...documentation })
   const added = findNode(node.id)
   if (added) addSelectedNodes([added])
   await nextTick()
@@ -129,7 +136,7 @@ async function addNode(kind: NodeKind, copy?: WorkflowNodeData, preferred?: XYPo
 function duplicateNode() {
   const node = selectedNode.value
   if (!node) return
-  void addNode(node.data.kind, node.data, { x: node.position.x + 120, y: node.position.y + 24 })
+  void addNode(node.data.kind, node.data, { x: node.position.x + 120, y: node.position.y + 24 }, nodeDocumentation.get(node.id))
 }
 
 function editNode(data: Partial<WorkflowNodeData>) {
@@ -140,9 +147,58 @@ function editEdgeLabel(label: string) {
   if (selectedEdge.value) selectedEdge.value.label = label || undefined
 }
 
+function withNote<K extends string>(notes: Partial<Record<K, string>> | undefined, field: K, value: string | undefined) {
+  const updated: Partial<Record<K, string>> = { ...notes }
+  if (value === undefined) delete updated[field]
+  else updated[field] = value
+  return Object.keys(updated).length ? updated : undefined
+}
+
+function editNodeDocumentation(field: NodeDocumentationField, value: string | undefined) {
+  if (!selectedNode.value) return
+  const { id } = selectedNode.value
+  const updated = withNote(nodeDocumentation.get(id), field, value)
+  if (updated) nodeDocumentation.set(id, updated)
+  else nodeDocumentation.delete(id)
+  recordEdit()
+}
+
+function editEdgeDescription(value: string | undefined) {
+  if (!selectedEdge.value) return
+  const { id } = selectedEdge.value
+  if (value === undefined) edgeDescriptions.delete(id)
+  else edgeDescriptions.set(id, value)
+  recordEdit()
+}
+
+function editOverview(field: OverviewField, value: string | undefined) {
+  overview.value = withNote(overview.value, field, value)
+  recordEdit()
+}
+
 function deleteSelection() {
-  if (selectedNode.value) removeNodes(selectedNode.value)
-  if (selectedEdge.value) removeEdges(selectedEdge.value)
+  const selectedNodes = getSelectedNodes.value
+  const selectedEdges = getSelectedEdges.value
+  const nodeIds = new Set(selectedNodes.map(({ id }) => id))
+  for (const id of nodeIds) nodeDocumentation.delete(id)
+  for (const { id, source, target } of edges.value) {
+    if (nodeIds.has(source) || nodeIds.has(target)) edgeDescriptions.delete(id)
+  }
+  for (const { id } of selectedEdges) edgeDescriptions.delete(id)
+  removeEdges(selectedEdges)
+  removeNodes(selectedNodes)
+}
+
+function closeInspector() {
+  if (selectedNode.value || selectedEdge.value) removeSelectedElements()
+  else architectView.value = false
+}
+
+function commitDocumentationBeforePointerAction(event: PointerEvent) {
+  const focused = document.activeElement
+  // Canvas selection or dragging can take over before the browser moves focus.
+  if (event.button === 0 && focused instanceof HTMLTextAreaElement && event.target instanceof Node
+    && !focused.closest('label')?.contains(event.target)) focused.blur()
 }
 
 function releaseGesture(event: MouseTouchEvent) {
@@ -156,7 +212,7 @@ function releaseGesture(event: MouseTouchEvent) {
 }
 
 function onEscape(event: KeyboardEvent) {
-  if (event.key !== 'Escape' || event.isComposing) return
+  if (event.key !== 'Escape' || event.isComposing || event.target instanceof HTMLTextAreaElement) return
 
   if (activeConnection) {
     connectionCancelled = true
@@ -178,6 +234,8 @@ function onEscape(event: KeyboardEvent) {
     }
     removeSelectedElements()
     vueFlowRef.value?.focus({ preventScroll: true })
+  } else if (architectView.value) {
+    closeInspector()
   } else {
     return
   }
@@ -202,8 +260,7 @@ function onShortcut(event: KeyboardEvent) {
   } else if (!event.ctrlKey && !event.altKey && !event.metaKey && (key === 'delete' || key === 'backspace')) {
     if (!getSelectedNodes.value.length && !getSelectedEdges.value.length) return
     event.preventDefault()
-    removeEdges(getSelectedEdges.value)
-    removeNodes(getSelectedNodes.value)
+    deleteSelection()
   }
 }
 
@@ -221,6 +278,15 @@ function applyDocument(document: WorkflowDocument, fit = false) {
   endConnection(undefined, true)
   removeSelectedElements()
   projectName.value = document.metadata.name
+  overview.value = document.metadata.overview
+  nodeDocumentation.clear()
+  edgeDescriptions.clear()
+  for (const { id, documentation } of document.nodes) {
+    if (documentation) nodeDocumentation.set(id, documentation)
+  }
+  for (const { id, description } of document.edges) {
+    if (description !== undefined) edgeDescriptions.set(id, description)
+  }
   fitOnInitialize = fit && document.nodes.length > 0
   setEdges([])
   setNodes(document.nodes.map(materializeNode))
@@ -236,7 +302,7 @@ function applyDocument(document: WorkflowDocument, fit = false) {
 </script>
 
 <template>
-  <section class="workspace" aria-label="Workflow planning canvas">
+  <section class="workspace" aria-label="Workflow planning canvas" @pointerdown.capture="commitDocumentationBeforePointerAction">
     <div class="workspace-heading">
       <div>
         <p class="eyebrow">WORKFLOW</p>
@@ -272,6 +338,9 @@ function applyDocument(document: WorkflowDocument, fit = false) {
           </button>
           <NodePicker v-if="pickerOpen && !busy" @add="addNode" @close="closePicker()" />
         </div>
+        <button class="reset-button" type="button" :disabled="busy" :aria-pressed="architectView" @click="architectView = !architectView">
+          Architect View
+        </button>
         <button class="reset-button" type="button" :disabled="busy" @click="newProject(true)">Load demo</button>
       </div>
     </div>
@@ -317,13 +386,19 @@ function applyDocument(document: WorkflowDocument, fit = false) {
           Sketch freely. Nothing runs here.
         </Panel>
 
-        <Panel v-if="!pickerOpen && (selectedNode || selectedEdge)" position="top-right" class="inspector-panel nopan">
+        <Panel v-if="!pickerOpen && (architectView || selectedNode || selectedEdge)" position="top-right" class="inspector-panel nopan nowheel">
           <GraphInspector
-            :key="selectedNode?.id ?? selectedEdge?.id"
-            :node="selectedNode" :edge="selectedEdge"
-            @close="removeSelectedElements()"
+            :key="selectedNode?.id ?? selectedEdge?.id ?? ''"
+            :node="selectedNode" :edge="selectedEdge" :architect="architectView"
+            :node-documentation="selectedNode && nodeDocumentation.get(selectedNode.id)"
+            :edge-description="selectedEdge && edgeDescriptions.get(selectedEdge.id)"
+            :overview="overview"
+            @close="closeInspector"
             @update-node="editNode"
             @update-label="editEdgeLabel"
+            @update-node-documentation="editNodeDocumentation"
+            @update-edge-description="editEdgeDescription"
+            @update-overview="editOverview"
             @duplicate="duplicateNode"
             @delete="deleteSelection"
           />

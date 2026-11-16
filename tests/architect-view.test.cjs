@@ -35,7 +35,8 @@ function mockCanvas(window) {
     const width = client ? 140 : 72
     const height = client ? 88 : 72
     if (this.matches('.vue-flow__handle')) {
-      return rect(x + (this.classList.contains('source') ? width : -12), y + height / 2 - 6, 12, 12)
+      const center = (Number.parseFloat(this.style.top) || 50) / 100
+      return rect(x + (this.classList.contains('source') ? width : -12), y + height * center - 6, 12, 12)
     }
     return rect(x, y, width, height)
   }
@@ -80,6 +81,38 @@ async function launch(t, recoveries = new Map()) {
   mockCanvas(window)
 
   const files = new Map()
+  const exports = []
+  const recoveryWrites = []
+  let exportResponse = true
+  let lastRaster
+  window.Image = class {
+    set src(url) {
+      this.url = url
+      window.queueMicrotask(() => this.onload())
+    }
+  }
+  window.HTMLCanvasElement.prototype.getContext = function () {
+    return {
+      measureText: (text) => ({ width: Array.from(text).length * 6 }),
+      fillRect() {},
+      drawImage: (image) => {
+        const svg = decodeURIComponent(image.url.split(',')[1])
+        lastRaster = {
+          scene: new window.DOMParser().parseFromString(svg, 'image/svg+xml').documentElement,
+          width: this.width, height: this.height,
+        }
+      },
+    }
+  }
+  window.HTMLCanvasElement.prototype.toDataURL = function () {
+    const header = Buffer.alloc(24)
+    Buffer.from('iVBORw0KGgo=', 'base64').copy(header)
+    header.writeUInt32BE(13, 8)
+    header.write('IHDR', 12)
+    header.writeUInt32BE(this.width, 16)
+    header.writeUInt32BE(this.height, 20)
+    return 'data:image/png;base64,' + header.toString('base64')
+  }
   let chosenFile
   let closeHandler
   let destroyed = false
@@ -96,10 +129,18 @@ async function launch(t, recoveries = new Map()) {
             files.set(chosenFile, args.contents)
             return chosenFile
           case 'save_workflow': return void files.set(args.path, args.contents)
+          case 'save_export':
+            exports.push({ ...args })
+            if (typeof exportResponse === 'string') throw exportResponse
+            return exportResponse
           case 'list_recovery': return [...recoveries.keys()]
           case 'read_recovery': return recoveries.get(args.id)
-          case 'write_recovery': return void recoveries.set(args.id, args.contents)
-          case 'remove_recovery': return void recoveries.delete(args.id)
+          case 'write_recovery':
+            recoveryWrites.push(command)
+            return void recoveries.set(args.id, args.contents)
+          case 'remove_recovery':
+            recoveryWrites.push(command)
+            return void recoveries.delete(args.id)
           default: throw new Error('Unexpected command ' + command)
         }
       },
@@ -191,7 +232,12 @@ async function launch(t, recoveries = new Map()) {
 
   window.eval(bundle)
   await tick()
-  return { query, all, button, node, edge, handle, field, isDirty, click, drag, key, type, edit, save, open, close }
+  return {
+    query, all, button, node, edge, handle, field, isDirty, click, drag, key, type, edit, save, open, close,
+    mouse, exports, recoveryWrites,
+    raster: () => lastRaster,
+    setExportResponse: (response) => { exportResponse = response },
+  }
 }
 
 async function demo(t) {
@@ -725,4 +771,212 @@ test('opens Phase 2B and Phase 3A files with client fallbacks and rejects invali
   const node = (await app.save('/normalized.json')).nodes[0]
   assert.equal(Object.hasOwn(node, 'clientLabel'), false)
   assert.equal(node.businessDescription, 'Read request.\nCheck routing.')
+})
+
+test('exports the complete client PNG from Architect View with curved edges and no editor UI', async (t) => {
+  const app = await launch(t)
+  const fixture = structuredClone(legacyWorkflow)
+  fixture.metadata.name = 'Order / Review'
+  fixture.nodes[0].position = { x: -300, y: -100 }
+  fixture.nodes[1].position = { x: 1850, y: 450 }
+  fixture.nodes[1].clientLabel = 'Review orders'
+  fixture.nodes[1].businessDescription = 'Confirms order details from the request.'
+  fixture.nodes[1].documentation = { purpose: 'Private technical purpose' }
+  fixture.nodes.push({ id: 'router', kind: 'router', label: 'Route <tag>', position: { x: 275, y: 100 } })
+  fixture.edges.push({
+    id: 'router-http', source: 'router', target: 'http', sourceHandle: 'error',
+    targetHandle: 'in', appearance: 'error', label: 'Private edge label',
+  })
+  await app.open('/private/project.json', fixture)
+  await app.click('Architect View')
+  await app.click(app.node('http'))
+  await app.click('Zoom in')
+  const pane = app.query('.vue-flow__pane')
+  await app.drag(pane, pane, { clientX: 1800, clientY: 450 })
+  await app.click(app.node('http'))
+  const transforms = app.all('.vue-flow__node').map((node) => node.style.transform)
+  const viewport = app.query('.vue-flow__transformationpane').style.transform
+  const [viewportX, , zoom] = viewport.match(/-?[\d.]+/g).map(Number)
+  assert.ok(viewportX + fixture.nodes[1].position.x * zoom > pane.clientWidth, 'HTTP node is off-screen')
+  await app.click('Export PNG')
+
+  assert.deepEqual(app.exports.at(-1), {
+    format: 'png', suggestedName: 'Order  Review.png', contents: app.exports.at(-1).contents,
+  })
+  const { scene, width, height } = app.raster()
+  assert.equal(scene.localName, 'svg')
+  assert.deepEqual(scene.getAttribute('viewBox').split(' ').map(Number), [-340, -140, 2370, 718])
+  assert.deepEqual([width, height], [4740, 1436])
+  assert.equal(scene.querySelectorAll('g > rect').length, 3)
+  assert.equal(scene.querySelectorAll('g > svg').length, 3)
+  assert.equal(scene.querySelector('g > svg.lucide-mail-icon').getAttribute('stroke'), '#b4a3cc')
+  assert.equal(scene.querySelectorAll('g > rect')[1].getAttribute('stroke'), '#60516f')
+  assert.equal(scene.querySelectorAll('svg > path[marker-end]').length, 2)
+  assert.equal(scene.querySelector('svg > path').getAttribute('d'), 'M-148,-56 C845,-56 845,494 1838,494')
+  const errorPath = scene.querySelector('svg > path[stroke-dasharray]')
+  assert.match(errorPath.getAttribute('d'), /^M427,158\.66\d* C.* 1838,494$/)
+  assert.equal(errorPath.getAttribute('stroke'), '#ba8277')
+  assert.equal(errorPath.getAttribute('marker-end'), 'url(#arrow)')
+  const texts = [...scene.querySelectorAll('text')].map((text) => [...text.children].map((line) => line.textContent).join(' '))
+  assert.deepEqual(texts.slice(0, 2), ['Webhook', 'Review orders'])
+  assert.match(texts[2], /^Confirms order details from the/)
+  assert.match(texts[2], /…$/)
+  assert.equal(texts[3], 'Route <tag>')
+  assert.equal(scene.querySelector('tag'), null)
+  assert.ok([...scene.querySelectorAll('text')].every((text) => text.children.length <= 2))
+  assert.doesNotMatch(scene.textContent, /HTTP Request|Private technical purpose|Private edge label|Add Node|Undo/)
+  assert.equal(scene.querySelector('foreignObject, button, .vue-flow__handle, .is-selected, .graph-inspector'), null)
+  assert.equal(app.button('Architect View').getAttribute('aria-pressed'), 'true')
+  assert.ok(app.node('http').classList.contains('selected'))
+  assert.equal(app.query('.vue-flow__transformationpane').style.transform, viewport)
+  assert.deepEqual(app.all('.vue-flow__node').map((node) => node.style.transform), transforms)
+  assert.match(app.query('[role="status"]').textContent, /PNG exported/)
+  assert.equal(app.isDirty(), false)
+  assert.deepEqual(await app.save('/private/project.json'), fixture)
+
+  await app.click('Client View')
+  await app.click('Export PNG')
+  assert.equal(app.raster().scene.outerHTML, scene.outerHTML)
+  assert.ok(app.query('.is-client-view'))
+})
+
+test('preserves dirty state, undo and redo, recovery, and a focused draft during exports', async (t) => {
+  const app = await demo(t)
+  const baseline = await app.save()
+  await app.click(app.node('http'))
+  await app.edit('Purpose', 'Committed purpose')
+  await app.edit('Outputs', 'Second change')
+  await app.click('Undo')
+  await tick(570)
+  assert.equal(app.isDirty(), true)
+  assert.equal(app.button('Undo').disabled, false)
+  assert.equal(app.button('Redo').disabled, false)
+  const recoveryCount = app.recoveryWrites.length
+  await app.click(app.node('http'))
+  const draft = app.type('Purpose', 'Uncommitted draft')
+  assert.equal(app.mouse(app.button('Export Markdown'), 'mousedown'), false)
+  await app.click('Export Markdown')
+  await app.click('Export PNG')
+  assert.equal(draft.ownerDocument.activeElement, draft)
+  assert.equal(draft.value, 'Uncommitted draft')
+  assert.match(app.exports.find(({ format }) => format === 'md').contents, /Committed purpose/)
+  assert.doesNotMatch(app.exports.find(({ format }) => format === 'md').contents, /Uncommitted draft|Second change/)
+  app.key('Escape', {}, draft)
+  draft.blur()
+  await tick(570)
+  assert.equal(app.recoveryWrites.length, recoveryCount)
+  assert.equal(app.isDirty(), true)
+  assert.equal(app.button('Redo').disabled, false)
+  await app.click('Redo')
+  await app.click(app.node('http'))
+  assert.equal(app.field('Outputs').value, 'Second change')
+  await app.click('Undo')
+  await app.click('Undo')
+  assert.equal(app.isDirty(), false)
+  assert.deepEqual(await app.save(), baseline)
+})
+
+test('exports deterministic Markdown project, node, and connection documentation as plain text', async (t) => {
+  const app = await launch(t)
+  const fixture = structuredClone(legacyWorkflow)
+  fixture.metadata = {
+    name: 'Customers & [Orders] *v2*',
+    overview: {
+      summary: 'Receive & route\r\nSecond line\r\n\r\n<style>body {color:red}</style>',
+      goals: '# Prepare orders\n- Collect details', assumptions: 'Consent exists', constraints: 'Local only',
+    },
+  }
+  fixture.nodes[1].clientLabel = 'Order [review]'
+  fixture.nodes[1].businessDescription = 'Check details.\n1. Continue'
+  fixture.nodes[1].documentation = {
+    purpose: 'Check *only* orders', inputs: 'Order _ID_', outputs: 'Order rows',
+    configuration: 'Use \\ and \`literal\`', errorHandling: 'Leave retry to the operator',
+  }
+  fixture.edges[0].label = '[Payload](javascript:run())'
+  fixture.edges[0].description = 'Pass order details.\n> Keep this as plain text.'
+  await app.open('/private/workflow.json', fixture)
+  await app.click('Export Markdown')
+
+  const { contents } = app.exports.at(-1)
+  assert.deepEqual(app.exports.at(-1), { format: 'md', suggestedName: 'Customers  Orders v2.md', contents })
+  for (const heading of ['Project Overview', 'Workflow Summary', 'Node Documentation', 'Connection Documentation']) {
+    assert.ok(contents.includes('## ' + heading + '\n'))
+  }
+  for (const [title, value] of Object.entries({
+    'Project name': 'Customers \\& \\[Orders\\] \\*v2\\*',
+    'Project summary': 'Receive \\& route  \nSecond line  \n\n\\<style\\>body \\{color:red\\}\\</style\\>',
+    'Architecture goals': '\\# Prepare orders  \n\\- Collect details',
+    Assumptions: 'Consent exists', Constraints: 'Local only',
+    'Technical label': 'HTTP Request', 'Client-facing label': 'Order \\[review\\]',
+    'Business description': 'Check details.  \n1\\. Continue',
+    Purpose: 'Check \\*only\\* orders', Inputs: 'Order \\_ID\\_', Outputs: 'Order rows',
+    'Configuration notes': 'Use \\\\ and \\\`literal\\\`', 'Error-handling strategy': 'Leave retry to the operator',
+    'Source node': 'Node 1 · Webhook', 'Target node': 'Node 2 · HTTP Request',
+    'Visible edge label': '\\[Payload\\](javascript:run())',
+    'Technical description': 'Pass order details.  \n\\> Keep this as plain text.',
+  })) assert.ok(contents.includes('**' + title + '**\n\n' + value + '\n'), title)
+  assert.match(contents, /- Nodes: 2\n- Connections: 1/)
+  assert.match(contents, /Nodes without incoming connections: 1/)
+  assert.match(contents, /Not documented\./)
+  assert.doesNotMatch(contents, /\/private\/workflow\.json|schemaVersion|recovery/)
+  await app.click('Client View')
+  await app.click('Export Markdown')
+  assert.equal(app.exports.at(-1).contents, contents)
+  assert.match(app.query('[role="status"]').textContent, /Markdown exported/)
+})
+
+test('exports empty workflows and handles native cancellation and write errors via mocked IPC', async (t) => {
+  const app = await launch(t)
+  app.setExportResponse(false)
+  for (const action of ['Export PNG', 'Export Markdown']) {
+    await app.click(action)
+    assert.equal(app.query('[role="status"]'), null)
+    assert.equal(app.button(action).disabled, false)
+  }
+  assert.equal(app.exports.length, 2)
+  assert.match(app.raster().scene.textContent, /No nodes in this workflow/)
+  assert.deepEqual([app.raster().width, app.raster().height], [640, 320])
+  assert.match(app.exports.at(-1).contents, /- Nodes: 0\n- Connections: 0/)
+  assert.match(app.exports.at(-1).contents, /No nodes\./)
+  assert.match(app.exports.at(-1).contents, /No connections\./)
+
+  for (const [action, extension] of [['Export PNG', 'png'], ['Export Markdown', 'md']]) {
+    app.setExportResponse('Could not write the .' + extension + ' export. Permission denied.')
+    await app.click(action)
+    assert.match(app.query('[role="status"]').textContent, /Could not write.*Permission denied/)
+    assert.equal(app.button(action).disabled, false)
+  }
+  assert.equal(app.isDirty(), false)
+  assert.equal(app.button('Undo').disabled, true)
+  assert.equal(app.button('Redo').disabled, true)
+  assert.deepEqual(app.recoveryWrites, [])
+})
+
+
+test('caps a wide diagram at 8192 pixels while preserving its aspect ratio and full scene', async (t) => {
+  const app = await launch(t)
+  const fixture = structuredClone(legacyWorkflow)
+  fixture.nodes[0].position = { x: -450, y: 0 }
+  fixture.nodes[1].position = { x: 5740, y: 810 }
+  await app.open('/wide.json', fixture)
+  await app.click('Export PNG')
+  const { scene, width, height } = app.raster()
+  assert.deepEqual([width, height], [8192, 1249])
+  assert.equal(scene.getAttribute('viewBox'), '-490 -40 6410 978')
+  assert.equal(scene.querySelectorAll('g > rect').length, 2)
+  assert.equal(scene.querySelectorAll('path[marker-end]').length, 1)
+  const header = Buffer.from(app.exports.at(-1).contents, 'base64')
+  assert.deepEqual([header.readUInt32BE(16), header.readUInt32BE(20)], [8192, 1249])
+})
+
+test('rejects an encoder that silently returns a smaller PNG', async (t) => {
+  const app = await launch(t)
+  const { HTMLCanvasElement } = app.query('.workspace').ownerDocument.defaultView
+  const encode = HTMLCanvasElement.prototype.toDataURL
+  HTMLCanvasElement.prototype.toDataURL = function () {
+    return encode.call({ width: this.width / 2, height: this.height / 2 })
+  }
+  await app.click('Export PNG')
+  assert.match(app.query('[role="status"]').textContent, /requested 640 × 320 image/)
+  assert.equal(app.exports.length, 0)
 })

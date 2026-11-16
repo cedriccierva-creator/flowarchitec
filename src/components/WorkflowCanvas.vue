@@ -6,7 +6,7 @@ import { Maximize, Minus, MousePointer2, Plus, Redo2, Undo2 } from 'lucide-vue-n
 import GraphInspector from './GraphInspector.vue'
 import NodePicker from './NodePicker.vue'
 import WorkflowNode from './WorkflowNode.vue'
-import { createWorkflowNode } from '../data/nodeCatalog'
+import { clientCard, createWorkflowNode } from '../data/nodeCatalog'
 import type { NodeKind, WorkflowNodeData } from '../data/nodeCatalog'
 import { isDesktop } from '../data/desktop'
 import { captureWorkflow, materializeEdge, materializeNode, untitled } from '../data/workflowDocument'
@@ -60,8 +60,8 @@ let connectionCancelled = false
 const activeNodeDrag = shallowRef<{ event: MouseTouchEvent; positions: { id: string; position: XYPosition }[] }>()
 
 const {
-  busy, notice, recoveryError, recoveries, showRecovery, dirty, filePath, fileName, canUndo, canRedo,
-  recordEdit, undo, redo, newProject, openProject, saveProject, restore, discardRecovery,
+  busy, exporting, exportSucceeded, notice, recoveryError, recoveries, showRecovery, dirty, filePath, fileName, canUndo, canRedo,
+  recordEdit, undo, redo, newProject, openProject, saveProject, exportProject, restore, discardRecovery,
 } = useWorkflowSession(
   () => captureWorkflow(
     { name: projectName.value, overview: overview.value }, nodes.value, edges.value, nodeDocumentation, edgeDescriptions,
@@ -216,12 +216,22 @@ function closeInspector() {
 }
 
 function commitDocumentationBeforePointerAction(event: PointerEvent) {
+  if (event.target instanceof Element && event.target.closest('[data-export-action]')) return
   const focused = document.activeElement
   // Canvas selection or dragging can take over before the browser moves focus.
   if (event.button === 0 && (focused instanceof HTMLTextAreaElement
     || (focused instanceof HTMLInputElement && focused.closest('.editor-documentation-field')))
     && event.target instanceof Node
     && !focused.closest('label')?.contains(event.target)) focused.blur()
+}
+
+function keepExportDraftFocused(event: MouseEvent) {
+  // A pointer export reads the committed project without blurring a pending field edit.
+  if (document.activeElement?.matches('input, textarea, select')) event.preventDefault()
+}
+
+function requestExport(format: 'png' | 'md') {
+  if (!activeConnection && !reconnectingEdgeId) void exportProject(format)
 }
 
 function releaseGesture(event: MouseTouchEvent) {
@@ -331,6 +341,7 @@ function applyDocument(document: WorkflowDocument, fit = false) {
 <template>
   <section
     class="workspace" :class="{ 'is-client-view': clientView, 'is-presenting': presenting }"
+    :style="{ '--client-card-width': `${clientCard.width}px`, '--client-card-height': `${clientCard.height}px` }"
     :aria-label="clientView ? 'Client workflow canvas' : 'Workflow planning canvas'"
     @pointerdown.capture="commitDocumentationBeforePointerAction"
   >
@@ -382,6 +393,16 @@ function applyDocument(document: WorkflowDocument, fit = false) {
         <button v-if="clientView" ref="presentButton" class="reset-button" type="button" @click="setPresentation(true)">
           Present
         </button>
+        <div class="export-actions" role="group" aria-label="Export workflow">
+          <button class="reset-button" type="button" data-export-action
+            :disabled="busy || exporting || !isDesktop" @mousedown="keepExportDraftFocused" @click="requestExport('png')">
+            Export PNG
+          </button>
+          <button class="reset-button" type="button" data-export-action
+            :disabled="busy || exporting || !isDesktop" @mousedown="keepExportDraftFocused" @click="requestExport('md')">
+            Export Markdown
+          </button>
+        </div>
       </div>
     </div>
 
@@ -399,7 +420,8 @@ function applyDocument(document: WorkflowDocument, fit = false) {
       </ul>
     </div>
 
-    <p v-if="!presenting && (notice || recoveryError)" class="workspace-notice" role="status">{{ notice }} {{ recoveryError }}</p>
+    <p v-if="!presenting && (notice || recoveryError)" class="workspace-notice"
+      :class="{ 'export-success': exportSucceeded && !recoveryError }" role="status">{{ notice }} {{ recoveryError }}</p>
 
     <div class="canvas-frame" :inert="busy">
       <VueFlow

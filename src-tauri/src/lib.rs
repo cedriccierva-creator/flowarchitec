@@ -7,6 +7,7 @@ pub fn run() {
             workflow_files::open_workflow,
             workflow_files::save_workflow_as,
             workflow_files::save_workflow,
+            workflow_files::save_export,
             workflow_files::list_recovery,
             workflow_files::read_recovery,
             workflow_files::write_recovery,

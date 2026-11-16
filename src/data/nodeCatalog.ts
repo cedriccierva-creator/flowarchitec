@@ -37,6 +37,17 @@ export type NodeKind = keyof typeof nodeCatalog
 export type NodeIcon = keyof typeof nodeIcons
 export type NodeColor = keyof typeof nodeColors
 
+export const defaultNodeColors: Record<NodeKind, NodeColor> = {
+  webhook: 'amber', http: 'blue', router: 'green', agent: 'violet', error: 'rose',
+}
+
+export const clientCard = { width: 140, height: 88 }
+export const workflowHandleSize = 12
+
+export function outputPortFraction(index: number, count: number) {
+  return (index + 1) / (count + 1)
+}
+
 export interface WorkflowNodeData {
   kind: NodeKind
   label: string

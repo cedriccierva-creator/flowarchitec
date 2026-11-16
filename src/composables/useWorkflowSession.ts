@@ -1,5 +1,7 @@
 import { computed, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
 import { closeDesktopWindow, invoke, isDesktop, onDesktopClose } from '../data/desktop'
+import { exportMarkdown } from '../data/exportMarkdown'
+import { exportPng } from '../data/exportPng'
 import { demoWorkflow, parseWorkflow, untitled } from '../data/workflowDocument'
 import type { WorkflowDocument } from '../data/workflowDocument'
 
@@ -31,6 +33,8 @@ export function useWorkflowSession(
   const saved = ref(current.value)
   const filePath = ref<string>()
   const busy = ref(false)
+  const exporting = ref(false)
+  const exportSucceeded = ref(false)
   const notice = ref('')
   const recoveryError = ref('')
   const recoveries = shallowRef<RecoveryEntry[]>([])
@@ -107,6 +111,7 @@ export function useWorkflowSession(
     const focused = document.activeElement
     if (focused instanceof HTMLInputElement || focused instanceof HTMLTextAreaElement) focused.blur()
     notice.value = ''
+    exportSucceeded.value = false
     recordEdit()
     busy.value = true
     try {
@@ -145,7 +150,7 @@ export function useWorkflowSession(
       if (path && !saveAs) {
         await invoke('save_workflow', { path, contents })
       } else {
-        const suggestedName = (document.metadata.name.replace(/[^\p{L}\p{N} _-]/gu, '').trim() || 'workflow') + '.json'
+        const suggestedName = suggestedFileName(document, 'json')
         const selectedPath = await invoke<string | null>('save_workflow_as', { suggestedName, contents })
         if (!selectedPath) return
         filePath.value = selectedPath
@@ -153,6 +158,33 @@ export function useWorkflowSession(
       saved.value = snapshot
       await flushRecovery().catch(() => {})
     })
+  }
+
+  function suggestedFileName(document: WorkflowDocument, extension: string) {
+    const name = document.metadata.name.replace(/[^\p{L}\p{N} _-]/gu, '').trim() || 'workflow'
+    return name + '.' + extension
+  }
+
+  async function exportProject(format: 'png' | 'md') {
+    if (busy.value || exporting.value || gestureInProgress()) return
+    notice.value = ''
+    exportSucceeded.value = false
+    exporting.value = true
+    try {
+      const snapshot = capture()
+      const contents = format === 'png' ? await exportPng(snapshot) : exportMarkdown(snapshot)
+      const saved = await invoke<boolean>('save_export', {
+        format, suggestedName: suggestedFileName(snapshot, format), contents,
+      })
+      if (saved) {
+        notice.value = format === 'png' ? 'PNG exported.' : 'Markdown exported.'
+        exportSucceeded.value = true
+      }
+    } catch (error) {
+      notice.value = messageFor(error)
+    } finally {
+      exporting.value = false
+    }
   }
 
   function newProject(demo = false) {
@@ -215,8 +247,8 @@ export function useWorkflowSession(
   })
 
   return {
-    busy, notice, recoveryError, recoveries, showRecovery, dirty, filePath, fileName, recordEdit,
+    busy, exporting, exportSucceeded, notice, recoveryError, recoveries, showRecovery, dirty, filePath, fileName, recordEdit,
     canUndo: computed(() => past.value.length > 0), canRedo: computed(() => future.value.length > 0),
-    undo, redo, newProject, openProject, saveProject, restore, discardRecovery,
+    undo, redo, newProject, openProject, saveProject, exportProject, restore, discardRecovery,
   }
 }

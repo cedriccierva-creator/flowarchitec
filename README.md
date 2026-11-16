@@ -74,6 +74,13 @@ Network access to npm and Rust crate sources is needed for a fresh build. The co
 - Click **Present** to give the diagram the full app content area. Pan, zoom, and **Fit workflow to view** work in both client modes. Click **Exit Presentation** or press Escape to return to Client View. View changes preserve the current viewport and leave project history intact.
 - Cards keep their Architect canvas coordinates. Closely spaced nodes may overlap in Client View. Adjust their spacing in Architect View when preparing a diagram for presentation.
 
+## Export
+
+- **Export PNG** creates the complete Client View diagram from either workflow view, including nodes outside the viewport. It keeps the current layout, port-specific curves, icons, colors, and two-line client text previews on a padded charcoal background. It uses 2× pixel density when the image fits within 8,192 pixels per side and 16 megapixels. Larger diagrams scale down to fit those limits.
+- **Export Markdown** writes the project overview, a topology summary, node documentation, and connection documentation in workflow order. It preserves multiline notes and escapes Markdown formatting in project text. Empty technical fields appear as **Not documented.**
+- Both buttons use the Linux desktop save dialog. The suggested filename comes from the project title. Keep the `.png` or `.md` extension when renaming it. The dialog confirms before replacing an existing file. Either format can export an empty workflow.
+- Export reads committed fields, including unsaved project edits. Finish editing a draft field with Tab before exporting it. Exports operate offline and leave the open project, its file path, undo history, and recovery state in place. The buttons are available outside Presentation Mode.
+
 ## Project files, recovery, and history
 
 - The app starts with an empty workflow. Click the project title to rename it. **New Project** resets the graph and project name. **Load demo** starts a separate workflow with the original five nodes and four edges. Switching away from unsaved changes requires confirmation.
@@ -83,7 +90,7 @@ Network access to npm and Rust crate sources is needed for a fresh build. The co
 - Unsaved edits are written after 500 ms of inactivity to snapshots under Tauri's application-data `recovery` folder. On Linux this is normally `~/.local/share/io.flowarchitect.desktop/recovery/`. Switching projects or closing the window flushes pending edits. Snapshots are offered at startup. **Restore as unsaved** loads a copy that needs an explicit file destination, and **Discard snapshot** permanently removes the selected snapshot after confirmation.
 - **Ctrl+Z** undoes an edit. **Ctrl+Shift+Z** and **Ctrl+Y** redo. The workspace keeps up to 80 undo steps in memory per open workflow. A drag counts as one step, and text fields keep their own editing shortcuts.
 
-Native file and recovery actions are available in the Linux Tauri app. The browser preview supports canvas editing and history.
+Native file, recovery, and export actions are available in the Linux Tauri app. The browser preview supports canvas editing and history.
 
 ## Structure and dependency purpose
 
@@ -93,6 +100,7 @@ Native file and recovery actions are available in the Linux Tauri app. The brows
 | `src/components/WorkflowCanvas.vue` | Vue Flow state, project and recovery controls, and keyboard shortcuts |
 | `src/composables/useWorkflowSession.ts` | Active project, unsaved state, history, and recovery scheduling |
 | `src/data/workflowDocument.ts`, `src/data/desktop.ts` | Workflow schema, validation, and Tauri command bridge |
+| `src/data/exportPng.ts`, `src/data/exportMarkdown.ts` | Client diagram rasterization and architecture documentation formatting |
 | `src/components/WorkflowNode.vue` | Architect tile, Client View card, and shared connection anchors |
 | `src/components/NodePicker.vue`, `src/components/GraphInspector.vue` | Searchable picker and contextual editing |
 | `src/components/DocumentationField.vue` | Plain text editing and blur commits |
@@ -110,7 +118,7 @@ The frontend structure is adapted from the official cached `create-vite` Vue/Typ
 
 ## Verification
 
-The [verification notes](docs/verification.md) record the automated results, test commands, and Phase 3B COSMIC/Wayland checklist.
+The [verification notes](docs/verification.md) record the automated results, test commands, and Phase 4A COSMIC/Wayland checklist.
 
 ## Official references
 

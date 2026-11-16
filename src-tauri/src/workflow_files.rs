@@ -14,13 +14,31 @@ use tauri::{AppHandle, Manager, State, WebviewWindow};
 const MAX_BYTES: u64 = 8 * 1024 * 1024;
 static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
+#[derive(Clone, Copy)]
+enum FileDialog {
+    OpenWorkflow,
+    SaveWorkflow,
+    ExportPng,
+    ExportMarkdown,
+}
+
+impl FileDialog {
+    fn extension(self) -> &'static str {
+        match self {
+            Self::OpenWorkflow | Self::SaveWorkflow => "json",
+            Self::ExportPng => "png",
+            Self::ExportMarkdown => "md",
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct SelectedFiles(Mutex<HashSet<String>>);
 
 #[cfg(target_os = "linux")]
 async fn choose_file(
     window: &WebviewWindow,
-    save: bool,
+    purpose: FileDialog,
     suggested_name: String,
 ) -> Result<Option<PathBuf>, String> {
     use gtk::prelude::{FileChooserExt, NativeDialogExt};
@@ -33,10 +51,17 @@ async fn choose_file(
                 let parent = window_handle
                     .gtk_window()
                     .map_err(|_| "The native file dialog could not open.")?;
-                let (title, action, accept) = if save {
-                    ("Save workflow", gtk::FileChooserAction::Save, "_Save")
+                let (title, filter_name) = match purpose {
+                    FileDialog::OpenWorkflow => ("Open workflow", "Workflow JSON"),
+                    FileDialog::SaveWorkflow => ("Save workflow", "Workflow JSON"),
+                    FileDialog::ExportPng => ("Export PNG", "PNG images"),
+                    FileDialog::ExportMarkdown => ("Export Markdown", "Markdown documents"),
+                };
+                let save = !matches!(purpose, FileDialog::OpenWorkflow);
+                let (action, accept) = if save {
+                    (gtk::FileChooserAction::Save, "_Save")
                 } else {
-                    ("Open workflow", gtk::FileChooserAction::Open, "_Open")
+                    (gtk::FileChooserAction::Open, "_Open")
                 };
                 let dialog = gtk::FileChooserNative::new(
                     Some(title),
@@ -48,9 +73,10 @@ async fn choose_file(
                 dialog.set_modal(true);
                 dialog.set_local_only(true);
                 let filter = gtk::FileFilter::new();
-                filter.set_name(Some("Workflow JSON"));
-                filter.add_pattern("*.json");
-                filter.add_pattern("*.JSON");
+                filter.set_name(Some(filter_name));
+                let extension = purpose.extension();
+                filter.add_pattern(&format!("*.{extension}"));
+                filter.add_pattern(&format!("*.{}", extension.to_ascii_uppercase()));
                 dialog.add_filter(filter);
                 if save {
                     dialog.set_current_name(&suggested_name);
@@ -77,8 +103,12 @@ async fn choose_file(
 }
 
 #[cfg(not(target_os = "linux"))]
-async fn choose_file(_: &WebviewWindow, _: bool, _: String) -> Result<Option<PathBuf>, String> {
-    Err("Native workflow file dialogs are available on Linux.".into())
+async fn choose_file(
+    _: &WebviewWindow,
+    _: FileDialog,
+    _: String,
+) -> Result<Option<PathBuf>, String> {
+    Err("Native file dialogs are available on Linux.".into())
 }
 
 fn path_string(path: PathBuf) -> Result<String, String> {
@@ -114,6 +144,10 @@ fn write_atomic(path: &Path, contents: &str) -> io::Result<()> {
             "File exceeds 8 MiB",
         ));
     }
+    write_atomic_bytes(path, contents.as_bytes())
+}
+
+fn write_atomic_bytes(path: &Path, contents: &[u8]) -> io::Result<()> {
     let directory = path.parent().ok_or(io::ErrorKind::InvalidInput)?;
     let epoch = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -133,7 +167,7 @@ fn write_atomic(path: &Path, contents: &str) -> io::Result<()> {
     }
     let mut file = options.open(&temporary)?;
     let result = (|| {
-        file.write_all(contents.as_bytes())?;
+        file.write_all(contents)?;
         file.sync_all()?;
         drop(file);
         fs::rename(&temporary, path)?;
@@ -168,7 +202,7 @@ pub async fn open_workflow(
     window: WebviewWindow,
     selected: State<'_, SelectedFiles>,
 ) -> Result<Option<(String, String)>, String> {
-    let Some(path) = choose_file(&window, false, String::new()).await? else {
+    let Some(path) = choose_file(&window, FileDialog::OpenWorkflow, String::new()).await? else {
         return Ok(None);
     };
     let path = path_string(path)?;
@@ -188,7 +222,7 @@ pub async fn save_workflow_as(
     suggested_name: String,
     contents: String,
 ) -> Result<Option<String>, String> {
-    let Some(path) = choose_file(&window, true, suggested_name).await? else {
+    let Some(path) = choose_file(&window, FileDialog::SaveWorkflow, suggested_name).await? else {
         return Ok(None);
     };
     let path = path_string(path)?;
@@ -216,6 +250,55 @@ pub async fn save_workflow(
         return Err("Choose the file location using Save As.".into());
     }
     write_atomic(Path::new(&path), &contents).map_err(write_error)
+}
+
+fn write_export(path: &Path, purpose: FileDialog, contents: &[u8]) -> Result<(), String> {
+    let extension = purpose.extension();
+    if !path
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case(extension))
+    {
+        return Err(format!("Use the .{extension} extension for this export."));
+    }
+    write_atomic_bytes(path, contents)
+        .map_err(|error| format!("Could not write the .{extension} export. {error}"))
+}
+
+#[tauri::command]
+pub async fn save_export(
+    window: WebviewWindow,
+    format: String,
+    suggested_name: String,
+    contents: String,
+) -> Result<bool, String> {
+    let purpose = match format.as_str() {
+        "png" => FileDialog::ExportPng,
+        "md" => FileDialog::ExportMarkdown,
+        _ => return Err("Unknown export format.".into()),
+    };
+    let Some(path) = choose_file(&window, purpose, suggested_name).await? else {
+        return Ok(false);
+    };
+    let bytes = match purpose {
+        FileDialog::ExportPng => decode_png(&contents)?,
+        _ => contents.into_bytes(),
+    };
+    write_export(&path, purpose, &bytes)?;
+    Ok(true)
+}
+
+#[cfg(target_os = "linux")]
+fn decode_png(contents: &str) -> Result<Vec<u8>, String> {
+    let png = gtk::glib::base64_decode(contents);
+    if !png.starts_with(b"\x89PNG\r\n\x1a\n") {
+        return Err("Could not encode the workflow as PNG.".into());
+    }
+    Ok(png)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn decode_png(_: &str) -> Result<Vec<u8>, String> {
+    Err("Native PNG export is available on Linux.".into())
 }
 
 fn recovery_directory(app: &AppHandle) -> Result<PathBuf, String> {
@@ -325,5 +408,39 @@ mod tests {
         assert!(valid_recovery_id("0123456789abcdef0123456789abcdef"));
         assert!(!valid_recovery_id("../0123456789abcdef0123456789abc"));
         assert!(!valid_recovery_id("project.json"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn exports_png_bytes_and_utf8_markdown() -> Result<(), Box<dyn std::error::Error>> {
+        let directory = std::env::temp_dir().join(format!(
+            "flowarchitect-export-test-{}-{}",
+            std::process::id(),
+            TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&directory)?;
+        let result = (|| {
+            let png = decode_png("iVBORw0KGgo=")?;
+            let png_path = directory.join("diagram.PNG");
+            write_export(&png_path, FileDialog::ExportPng, &png)?;
+            assert_eq!(fs::read(&png_path)?, b"\x89PNG\r\n\x1a\n");
+            assert!(decode_png("not a png").is_err());
+
+            let md_path = directory.join("architecture.md");
+            let markdown = "# Project\n\nRévision\n";
+            write_export(&md_path, FileDialog::ExportMarkdown, markdown.as_bytes())?;
+            assert_eq!(fs::read_to_string(&md_path)?, markdown);
+
+            let obstruction = directory.join("blocked.png");
+            fs::create_dir(&obstruction)?;
+            let error = write_export(&obstruction, FileDialog::ExportPng, &png).unwrap_err();
+            assert!(error.starts_with("Could not write the .png export."));
+            assert!(write_export(&md_path, FileDialog::ExportPng, &png).is_err());
+            assert_eq!(fs::read_to_string(&md_path)?, markdown);
+            assert_eq!(fs::read_dir(&directory)?.count(), 3);
+            Ok(())
+        })();
+        let cleanup = fs::remove_dir_all(directory);
+        result.and(cleanup.map_err(Into::into))
     }
 }

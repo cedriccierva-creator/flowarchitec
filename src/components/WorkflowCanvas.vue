@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, reactive, ref, shallowRef } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, shallowRef, watch } from 'vue'
 import { ConnectionLineType, ConnectionMode, MarkerType, Panel, VueFlow, useVueFlow } from '@vue-flow/core'
 import type { Connection, DefaultEdgeOptions, MouseTouchEvent, XYPosition } from '@vue-flow/core'
 import { Maximize, Minus, MousePointer2, Plus, Redo2, Undo2 } from 'lucide-vue-next'
@@ -19,7 +19,7 @@ const {
   addEdges, addNodes, addSelectedNodes, connectionClickStartHandle, dimensions, edges, endConnection,
   findNode, fitView, getNodesInitialized, getSelectedEdges, getSelectedNodes, nodes, onClickConnectStart,
   onConnect, onConnectEnd, onConnectStart, onEdgeUpdate,
-  onEdgeUpdateEnd, onEdgeUpdateStart, onNodeDragStart, onNodeDragStop, onNodesInitialized,
+  onEdgeUpdateEnd, onEdgeUpdateStart, onNodeDragStart, onNodeDragStop, onNodesInitialized, project,
   removeEdges, removeNodes, removeSelectedElements, setEdges, setNodes, setViewport, updateEdge, updateNode,
   updateNodeData, updateNodeInternals, viewport, vueFlowRef, zoomIn, zoomOut,
 } = useVueFlow()
@@ -37,6 +37,7 @@ const overview = shallowRef<ProjectOverview>()
 const nodeDocumentation = reactive(new Map<string, NodeDocumentation>())
 const edgeDescriptions = reactive(new Map<string, string>())
 const pickerOpen = ref(false)
+const picker = ref<InstanceType<typeof NodePicker>>()
 const addButton = ref<HTMLButtonElement>()
 const selectedNode = computed(() => getSelectedNodes.value.length === 1 && !getSelectedEdges.value.length
   ? getSelectedNodes.value[0] : undefined)
@@ -126,6 +127,29 @@ function closePicker(restoreFocus = true) {
   if (restoreFocus) addButton.value?.focus()
 }
 
+const pickerBlocked = computed(() => busy.value || exporting.value || clientView.value || presenting.value)
+watch(pickerBlocked, (blocked) => { if (blocked) closePicker(false) })
+
+function canUsePicker() {
+  return !pickerBlocked.value && !activeNodeDrag.value && !activeConnection && !reconnectingEdgeId
+    && !connectionClickStartHandle.value
+}
+
+function openPicker() {
+  if (!canUsePicker()) return
+  if (pickerOpen.value) picker.value?.focusSearch()
+  else pickerOpen.value = true
+}
+
+function togglePicker() {
+  if (pickerOpen.value) closePicker()
+  else openPicker()
+}
+
+function addFromPicker(kind: NodeKind) {
+  if (pickerOpen.value && canUsePicker()) void addNode(kind)
+}
+
 function switchView() {
   if (busy.value || activeNodeDrag.value || activeConnection || reconnectingEdgeId) return
   const focused = document.activeElement
@@ -144,7 +168,7 @@ function setPresentation(enabled: boolean) {
 }
 
 async function addNode(kind: NodeKind, copy?: WorkflowNodeData, preferred?: XYPosition, documentation?: NodeDocumentation) {
-  const position = findNodePosition(viewport.value, dimensions.value, nodes.value, preferred)
+  const position = findNodePosition(project, dimensions.value, nodes.value, preferred)
   const node = createWorkflowNode(kind, nextId('node'), position)
   if (copy) {
     node.data = { ...copy, label: `${copy.label.slice(0, 75)} copy`, outputs: copy.outputs.map((port) => ({ ...port })) }
@@ -250,8 +274,8 @@ function releaseGesture(event: MouseTouchEvent) {
 }
 
 function onEscape(event: KeyboardEvent) {
-  if (event.isComposing || (event.target instanceof HTMLElement
-    && event.target.closest('.editor-documentation-field, .review-prompt select'))) return
+  if (event.target instanceof HTMLElement
+    && event.target.closest('.editor-documentation-field, .review-prompt select')) return
 
   if (presenting.value) {
     setPresentation(false)
@@ -287,16 +311,21 @@ function onEscape(event: KeyboardEvent) {
 }
 
 function onShortcut(event: KeyboardEvent) {
+  if (event.defaultPrevented || event.isComposing) return
   if (event.key === 'Escape') {
     onEscape(event)
     return
   }
-  if (event.isComposing || clientView.value || busy.value || activeNodeDrag.value || activeConnection || reconnectingEdgeId
+  if (clientView.value || presenting.value || busy.value || activeNodeDrag.value || activeConnection || reconnectingEdgeId
     || (event.target instanceof HTMLElement
-      && (event.target.isContentEditable || event.target.closest('input, textarea, select')))) return
+      && (event.target.isContentEditable || event.target.closest('input, textarea, select, .node-picker')))) return
 
   const key = event.key.toLowerCase()
-  if (event.ctrlKey && !event.altKey && !event.metaKey && (key === 'z' || key === 'y')) {
+  if (key === 'k' && event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey) {
+    if (!architectView.value || !canUsePicker()) return
+    event.preventDefault()
+    if (!event.repeat) openPicker()
+  } else if (event.ctrlKey && !event.altKey && !event.metaKey && (key === 'z' || key === 'y')) {
     event.preventDefault()
     if (key === 'y' || event.shiftKey) redo()
     else undo()
@@ -381,12 +410,13 @@ function applyDocument(document: WorkflowDocument, fit = false) {
           <div class="node-picker-anchor">
             <button
               ref="addButton" class="reset-button add-node-button" type="button"
-              :disabled="busy" aria-haspopup="dialog" :aria-expanded="pickerOpen" :aria-controls="pickerOpen ? 'node-picker' : undefined"
-              @click="pickerOpen = !pickerOpen"
+              :disabled="pickerBlocked" aria-haspopup="dialog" :aria-expanded="pickerOpen" :aria-controls="pickerOpen ? 'node-picker' : undefined"
+              :aria-keyshortcuts="architectView ? 'Control+K' : undefined" :title="architectView ? 'Add Node (Ctrl+K)' : undefined"
+              @click="togglePicker"
             >
               <Plus :size="15" aria-hidden="true" />Add Node
             </button>
-            <NodePicker v-if="pickerOpen && !busy" @add="addNode" @close="closePicker()" />
+            <NodePicker v-if="pickerOpen" ref="picker" @add="addFromPicker" @close="closePicker()" />
           </div>
           <button class="reset-button" type="button" :disabled="busy" :aria-pressed="architectView" @click="architectView = !architectView">
             Architect View

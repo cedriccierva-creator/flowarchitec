@@ -26,7 +26,7 @@ button svg { flex-shrink: 0; }
 .local-status { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 11px; }
 .local-status > span { width: 5px; height: 5px; border-radius: 50%; background: #a8b396; }
 .workspace { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 0 28px; }
-.workspace-heading { display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; padding: 30px 0 26px; gap: 20px; }
+.workspace-heading { position: relative; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; padding: 30px 0 26px; gap: 20px; }
 .eyebrow { margin: 0 0 9px; font-size: 9px; color: var(--muted); letter-spacing: 1.7px; font-weight: 600; }
 h1 { margin: 0; font-size: 25px; font-weight: 500; letter-spacing: -0.9px; line-height: 1.25; }
 .reset-button { display: inline-flex; align-items: center; gap: 7px; border: 1px solid #454037; border-radius: 5px; padding: 9px 12px; background: transparent; color: #c5bdae; font-size: 11px; white-space: nowrap; }
@@ -63,7 +63,6 @@ h1 { margin: 0; font-size: 25px; font-weight: 500; letter-spacing: -0.9px; line-
 .interaction-hint { display: flex; align-items: center; gap: 7px; }
 .footer-separator { margin: 0 10px; color: #6c6457; }
 .workspace-actions { display: flex; align-items: center; gap: 8px; }
-.node-picker-anchor { position: relative; }
 .add-node-button { color: #e8c798; border-color: #66533d; background: #2d271f; }
 .editor-popover {
   width: 230px;
@@ -75,7 +74,7 @@ h1 { margin: 0; font-size: 25px; font-weight: 500; letter-spacing: -0.9px; line-
   color: #e4dfd5;
   font-size: 11px;
 }
-.node-picker { position: absolute; z-index: 10; right: 0; top: calc(100% + 8px); }
+.node-picker { position: absolute; z-index: 10; right: 0; top: calc(100% - 8px); }
 .vue-flow__panel.inspector-panel { margin: 14px; max-height: calc(100% - 28px); overflow-y: auto; overscroll-behavior: contain; border-radius: 7px; }
 .architect-inspector { width: 310px; }
 .reset-button[aria-pressed="true"] { color: #e8c798; border-color: #66533d; background: #2d271f; }
@@ -99,8 +98,8 @@ h1 { margin: 0; font-size: 25px; font-weight: 500; letter-spacing: -0.9px; line-
 .editor-section-title { margin: 14px 0 10px; border-top: 1px solid #494238; padding-top: 12px; font-size: 11px; font-weight: 600; }
 .node-search { display: flex; align-items: center; gap: 7px; color: var(--muted); }
 .node-search svg { flex-shrink: 0; }
-.node-options { display: grid; gap: 2px; margin: 8px 0 0; padding: 0; list-style: none; }
-.node-options button {
+.node-options { display: grid; gap: 2px; max-height: min(230px, 36vh); overflow-y: auto; overscroll-behavior: contain; margin: 8px 0 0; padding: 0; list-style: none; }
+.node-options li {
   display: flex;
   align-items: center;
   gap: 9px;
@@ -109,10 +108,12 @@ h1 { margin: 0; font-size: 25px; font-weight: 500; letter-spacing: -0.9px; line-
   border: 0;
   border-radius: 4px;
   background: transparent;
+  cursor: pointer;
   text-align: left;
 }
-.node-options button:hover, .node-options button:focus-visible { background: #34312c; }
-.node-options svg { color: var(--accent); }
+.node-options li:hover { background: #34312c; }
+.node-options li[aria-selected="true"] { background: #39332b; box-shadow: inset 0 0 0 1px #66533d; }
+.node-options svg { flex-shrink: 0; color: var(--accent); }
 .node-options small { display: block; margin-top: 2px; color: var(--muted); font-size: 10px; }
 .editor-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
 .editor-actions button { padding: 6px 7px; }

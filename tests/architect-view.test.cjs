@@ -131,11 +131,17 @@ async function launch(t, recoveries = new Map()) {
   let closeHandler
   let destroyed = false
   let pointerTarget
+  let commandGate
   document.elementFromPoint = () => pointerTarget ?? document.querySelector('.vue-flow__pane')
   window.confirm = () => true
   window.__TAURI__ = {
     core: {
       async invoke(command, args) {
+        if (commandGate?.command === command) {
+          const { pending } = commandGate
+          commandGate = undefined
+          await pending
+        }
         switch (command) {
           case 'open_workflow': return [chosenFile, files.get(chosenFile)]
           case 'save_workflow_as':
@@ -256,6 +262,12 @@ async function launch(t, recoveries = new Map()) {
     raster: () => lastRaster,
     setExportResponse: (response) => { exportResponse = response },
     setClipboardError: (error) => { clipboardError = error },
+    pauseCommand(command) {
+      let resume
+      const pending = new Promise((resolve) => { resume = resolve })
+      commandGate = { command, pending }
+      return resume
+    },
   }
 }
 
@@ -1206,4 +1218,266 @@ test('review export uses committed unsaved edits and preserves state, views, and
   await app.click('Undo')
   assert.equal(app.isDirty(), false)
   assert.deepEqual(await app.save(), baseline)
+})
+
+const quickAddKey = { ctrlKey: true }
+
+function nodeSearch(app) {
+  return app.query('#node-picker input')
+}
+
+async function searchNodes(app, value) {
+  const input = nodeSearch(app)
+  input.value = value
+  input.dispatchEvent(new input.ownerDocument.defaultView.Event('input', { bubbles: true }))
+  await tick()
+}
+
+function highlightedNode(app) {
+  return app.query('#node-options [aria-selected="true"]')
+}
+
+test('node picker searches catalog names case-insensitively and handles empty results', async (t) => {
+  const app = await launch(t)
+  await app.click('Add Node')
+  const input = nodeSearch(app)
+  assert.equal(input.ownerDocument.activeElement, input)
+  assert.equal(app.all('#node-options [role="option"]').length, 5)
+  assert.match(highlightedNode(app).textContent, /Webhook Trigger/)
+
+  await searchNodes(app, '  tRiGgEr  ')
+  const [match] = app.all('#node-options [role="option"]')
+  assert.equal(app.all('#node-options [role="option"]').length, 1)
+  assert.match(match.textContent, /Webhook Trigger/)
+  assert.ok(match.querySelector('svg.lucide-webhook-icon'))
+
+  await searchNodes(app, 'missing node type')
+  assert.equal(highlightedNode(app), null)
+  assert.equal(input.getAttribute('aria-expanded'), 'false')
+  assert.equal(input.hasAttribute('aria-activedescendant'), false)
+  assert.match(app.query('#node-picker [role="status"]').textContent, /No matching nodes/)
+  for (const key of ['ArrowDown', 'ArrowUp', 'Enter']) assert.equal(app.key(key, {}, input), false)
+  await tick()
+  assert.equal(app.all('.vue-flow__node').length, 0)
+  assert.equal(app.isDirty(), false)
+
+  await searchNodes(app, '')
+  assert.equal(app.all('#node-options [role="option"]').length, 5)
+  assert.equal(input.getAttribute('aria-activedescendant'), highlightedNode(app).id)
+  await app.click(app.query('#node-option-http'))
+  assert.equal(nodeSearch(app), null)
+  assert.match(app.query('.vue-flow__node.selected').textContent, /HTTP Request/)
+})
+
+test('quick add highlights with arrows, adds on Enter, and closes on Escape without changing selection', async (t) => {
+  const app = await demo(t)
+  await app.click(app.node('webhook'))
+  assert.equal(app.key('k', quickAddKey, app.node('webhook')), false)
+  await tick()
+  const input = nodeSearch(app)
+  assert.equal(input.ownerDocument.activeElement, input)
+  assert.equal(app.button('Add Node').getAttribute('aria-expanded'), 'true')
+
+  assert.equal(app.key('ArrowUp', {}, input), false)
+  await tick()
+  assert.equal(highlightedNode(app).id, 'node-option-error')
+  app.key('ArrowDown', {}, input)
+  app.key('ArrowDown', {}, input)
+  await tick()
+  assert.equal(input.getAttribute('aria-activedescendant'), 'node-option-http')
+  await searchNodes(app, 'r')
+  assert.equal(highlightedNode(app).id, 'node-option-webhook')
+  app.key('ArrowDown', {}, input)
+  app.key('ArrowDown', {}, input)
+  await tick()
+  assert.equal(highlightedNode(app).id, 'node-option-router')
+  assert.equal(app.key('Enter', { isComposing: true }, input), true)
+  assert.equal(app.key('Escape', { isComposing: true }, input), true)
+  assert.equal(app.key('Enter', { repeat: true }, input), false)
+  assert.equal(app.all('.vue-flow__node').length, 5)
+  assert.equal(app.key('Enter', {}, input), false)
+  await tick()
+
+  assert.equal(nodeSearch(app), null)
+  const added = app.query('.vue-flow__node.selected')
+  assert.match(added.textContent, /Router/)
+  assert.equal(added.ownerDocument.activeElement, added)
+  assert.equal(app.all('.vue-flow__node.selected').length, 1)
+  assert.equal(app.field('Name').value, 'Router')
+
+  app.key('k', quickAddKey, added)
+  await tick()
+  assert.equal(app.key('Escape', {}, nodeSearch(app)), false)
+  await tick()
+  assert.equal(nodeSearch(app), null)
+  assert.equal(added.ownerDocument.activeElement, app.button('Add Node'))
+  assert.equal(app.query('.vue-flow__node.selected'), added)
+  assert.equal(app.all('.vue-flow__node').length, 6)
+})
+
+test('quick add leaves field shortcuts, graph gestures, read-only views, and dialogs alone', async (t) => {
+  const app = await launch(t)
+  assert.equal(app.key('k', quickAddKey), true)
+  assert.equal(nodeSearch(app), null)
+  await app.click('Load demo')
+  await app.click('Architect View')
+  assert.equal(app.button('Add Node').getAttribute('aria-keyshortcuts'), 'Control+K')
+
+  const notes = app.type('Project summary', 'Draft in a documentation field')
+  assert.equal(app.key('k', quickAddKey, notes), true)
+  assert.equal(app.key('z', quickAddKey, notes), true)
+  assert.equal(notes.ownerDocument.activeElement, notes)
+  assert.equal(notes.value, 'Draft in a documentation field')
+  app.key('Escape', {}, notes)
+  notes.blur()
+  const projectName = app.query('.project-name')
+  projectName.focus()
+  assert.equal(app.key('k', quickAddKey, projectName), true)
+  projectName.blur()
+  for (const modifiers of [
+    { ctrlKey: true, shiftKey: true }, { ctrlKey: true, altKey: true }, { metaKey: true },
+    { ctrlKey: true, isComposing: true },
+  ]) assert.equal(app.key('k', modifiers), true)
+  await tick()
+  assert.equal(nodeSearch(app), null)
+
+  await app.click(app.handle('webhook', 'out'))
+  assert.equal(app.key('k', quickAddKey), true)
+  app.key('Escape')
+  await tick()
+  assert.equal(nodeSearch(app), null)
+
+  app.key('k', quickAddKey)
+  await tick()
+  const finishSave = app.pauseCommand('save_workflow_as')
+  await app.click('Save As…')
+  assert.equal(nodeSearch(app), null)
+  assert.equal(app.button('Add Node').disabled, true)
+  assert.equal(app.key('k', quickAddKey), true)
+  finishSave()
+  await tick()
+  assert.equal(nodeSearch(app), null)
+
+  const finishExport = app.pauseCommand('save_export')
+  await app.click('Export Markdown')
+  assert.equal(app.button('Add Node').disabled, true)
+  assert.equal(app.key('k', quickAddKey), true)
+  finishExport()
+  await tick()
+
+  app.key('k', quickAddKey)
+  await tick()
+  await app.click('Client View')
+  assert.equal(nodeSearch(app), null)
+  assert.equal(app.button('Add Node'), undefined)
+  assert.equal(app.key('k', quickAddKey), true)
+  await app.click('Present')
+  assert.equal(app.key('k', quickAddKey, app.button('Exit Presentation')), true)
+  assert.equal(nodeSearch(app), null)
+  app.key('Escape', {}, app.button('Exit Presentation'))
+  await tick()
+  await app.click('Back to Architect View')
+  assert.equal(app.key('k', quickAddKey), false)
+  await tick()
+  assert.ok(nodeSearch(app))
+})
+
+test('quick add projects the visible center after zoom and pan and looks for free space there', async (t) => {
+  const app = await launch(t)
+  await app.click('Architect View')
+  await app.click('Zoom in')
+  await app.click('Zoom in')
+  const pane = app.query('.vue-flow__pane')
+  await app.drag(pane, pane, { clientX: 800, clientY: 460 })
+  const transform = () => app.query('.vue-flow__transformationpane').style.transform
+  const before = transform()
+  const [x, y, zoom] = before.match(/-?[\d.]+/g).map(Number)
+  assert.notEqual(zoom, 1)
+  assert.ok(Math.abs(x) + Math.abs(y) > 0)
+
+  for (const name of ['HTTP', 'Router']) {
+    assert.equal(app.key('k', quickAddKey), false)
+    await tick()
+    await searchNodes(app, name)
+    app.key('Enter', {}, nodeSearch(app))
+    await tick()
+  }
+  const { nodes } = await app.save()
+  const [first, second] = nodes.map(({ position }) => ({
+    left: x + position.x * zoom,
+    top: y + position.y * zoom,
+    width: 72 * zoom,
+  }))
+  assert.ok(Math.abs(first.left + first.width / 2 - pane.clientWidth / 2) < 0.01)
+  assert.ok(Math.abs(first.top + first.width / 2 - pane.clientHeight / 2) < 0.01)
+  for (const { left, top, width } of [first, second]) {
+    assert.ok(left >= 0 && left + width <= pane.clientWidth)
+    assert.ok(top >= 0 && top + width <= pane.clientHeight)
+  }
+  assert.ok(Math.abs(first.left - second.left) >= first.width || Math.abs(first.top - second.top) >= first.width)
+  assert.equal(transform(), before)
+})
+
+test('quick-added IDs and defaults survive history, save, recovery, and all exports', async (t) => {
+  const recoveries = new Map()
+  const app = await launch(t, recoveries)
+  const fixture = structuredClone(legacyWorkflow)
+  fixture.edges[0].id = 'node-2'
+  fixture.nodes[0].id = 'node-1'
+  fixture.edges[0].source = 'node-1'
+  await app.open('/project.json', fixture)
+  await app.click('Architect View')
+
+  app.key('k', quickAddKey)
+  await tick()
+  await searchNodes(app, 'router')
+  app.key('Enter', {}, nodeSearch(app))
+  await tick()
+  const added = app.node('node-3')
+  assert.ok(added.querySelector('svg.lucide-git-branch-icon'))
+  assert.equal(added.querySelector('.workflow-node').style.getPropertyValue('--node-accent'), '#a3b88d')
+  assert.equal(added.querySelector('.node-tile').title, 'Choose a path')
+  assert.deepEqual([...added.querySelectorAll('.vue-flow__handle')].map((handle) => handle.dataset.handleid), ['in', 'success', 'error'])
+  assert.equal(app.isDirty(), true)
+  app.key('z', quickAddKey, added)
+  await tick()
+  assert.equal(app.node('node-3'), null)
+  assert.equal(app.isDirty(), false)
+  app.key('z', { ...quickAddKey, shiftKey: true })
+  await tick()
+  assert.ok(app.node('node-3'))
+  assert.equal(app.isDirty(), true)
+
+  await app.click('Export PNG')
+  assert.equal(app.raster().scene.querySelectorAll('g > rect').length, 3)
+  assert.match(app.raster().scene.textContent, /Router/)
+  await app.click('Export Markdown')
+  assert.match(app.exports.at(-1).contents, /Router/)
+  await app.click('AI Review Prompt')
+  await app.click('Copy Review Prompt')
+  const reviewNode = reviewEvidence(app.clipboard.at(-1)).nodes.find(({ id }) => id === 'node-3')
+  assert.equal(reviewNode.technicalLabel, 'Router')
+  assert.equal(app.isDirty(), true)
+
+  await tick(570)
+  assert.equal(recoveries.size, 1)
+  const recovered = await launch(t, new Map(recoveries))
+  assert.equal(recovered.button('Recovery snapshots (1)').getAttribute('aria-expanded'), 'true')
+  await recovered.click('Restore as unsaved')
+  assert.ok(recovered.node('node-3'))
+  assert.equal(recovered.isDirty(), true)
+
+  const saved = await app.save()
+  assert.deepEqual(saved.nodes.slice(0, 2), fixture.nodes)
+  assert.deepEqual(saved.edges, fixture.edges)
+  const { position, ...metadata } = saved.nodes.at(-1)
+  assert.ok(Number.isFinite(position.x) && Number.isFinite(position.y))
+  assert.deepEqual(metadata, { id: 'node-3', kind: 'router', label: 'Router' })
+  assert.equal(app.isDirty(), false)
+  await app.click('New Project')
+  assert.equal(app.node('node-3'), null)
+  await app.open('/project.json')
+  assert.ok(app.node('node-3'))
+  assert.deepEqual(await app.save(), saved)
+  assert.deepEqual(await recovered.save(), saved)
 })

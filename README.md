@@ -52,7 +52,9 @@ Network access to npm and Rust crate sources is needed for a fresh build. The co
 
 ## Canvas
 
-- Open **Add Node**, search the five node types, and choose one. Enter in the search box adds the first match. New nodes appear near the center of the visible canvas.
+- Open **Add Node** from the toolbar. With **Architect View** enabled, **Ctrl+K** opens the same picker and focuses search. The shortcut stays inactive while a text field, native dialog, Client View, or Presentation Mode is active.
+- Search node types by name, ignoring case. Use **↑** and **↓** to highlight a result, **Enter** to add it, or **Escape** to close the picker. You can also click a result. An empty query shows the whole catalog.
+- FlowArchitect selects the new node and places it near the center of the current canvas at the current zoom and pan. If that spot is occupied, it tries nearby space. In a crowded viewport, a new node can overlap another tile. Zoom out or pan to make room.
 - Select a node to rename it, choose an icon or color, duplicate it, or delete it. A duplicate copies the node’s settings and has its own ports.
 - Drag an output port to an input port, or click the two ports in order. Router exposes separate Success and Error outputs. Webhook has only an output.
 - Select an edge to edit or clear its label. Drag either highlighted endpoint to a compatible port to reconnect it. Reconnecting keeps the edge’s label.
@@ -117,7 +119,7 @@ Native file, recovery, and export actions are available in the Linux Tauri app. 
 | `public/` | Local SVG app mark and dot pattern |
 | `src-tauri/` | Tauri shell, GTK file dialogs, atomic file writes, and local recovery storage |
 | `scripts/check-prerequisites.mjs` | Read-only environment diagnostic |
-| `tests/architect-view.test.cjs` | Production bundle tests with simulated input and mocked Tauri commands |
+| `tests/architect-view.test.cjs` | Production bundle tests for editing, quick add, persistence, and exports with simulated input and mocked Tauri commands |
 | `docs/verification.md` | Actual check results and desktop acceptance checklist |
 
 Runtime frontend dependencies: **Vue 3** for UI, **@vue-flow/core** for canvas behavior, **lucide-vue-next** for icons. Development dependencies: **Vite**, **@vitejs/plugin-vue**, **TypeScript**, **vue-tsc**, **@types/node**, and **@tauri-apps/cli**. Rust dependencies include **tauri**, **tauri-build**, and a direct Linux reference to **gtk**, which Tauri already uses and had locked. No npm packages or Rust crate versions were added.

@@ -1,5 +1,57 @@
 # FlowArchitect verification
 
+## Phase 5A — Node Search & Quick Add
+
+Started on 2026-11-16 from a clean worktree at `12911bd`, after Phase 4B native QA was complete.
+
+### Automated checks
+
+| Check | Result |
+| --- | --- |
+| `npm run doctor` | Passed. Detected Node, Cargo, GTK 3.24.41, and WebKitGTK 2.52.6. |
+| `npm run build` | Passed. Vue and TypeScript checks and the Vite production build completed. |
+| `tests/architect-view.test.cjs` | 36 passed. Five quick-add scenarios and all 31 earlier editing and export regressions ran against the production bundle. |
+| `cargo test --manifest-path src-tauri/Cargo.toml --locked --offline` | 3 passed. The Rust tests exercise native file handling on temporary files. |
+| `CARGO_NET_OFFLINE=true npm run desktop:build -- -- --locked --offline` | Passed. Produced the standalone Linux executable at `src-tauri/target/release/flowarchitect`. |
+| `git diff --check` | Passed. |
+
+The bundle suite exercises matching and empty results, keyboard and pointer selection, Escape and Enter, shortcut restrictions, and Vue Flow placement after simulated zoom and pan. It also checks ID collisions against imported nodes and edges, default Router ports and appearance, selection and focus, one-step undo and redo, dirty state, save and reopen, recovery, and inclusion in PNG, Markdown, and AI review exports. The suite simulates DOM layout, key and pointer input, PNG rasterization, and Tauri IPC.
+
+```bash
+npm run build
+qa_dir=$(mktemp -d)
+npm install --prefix "$qa_dir" --no-save --no-package-lock jsdom@30.1.3
+NODE_PATH="$qa_dir/node_modules" node tests/architect-view.test.cjs
+```
+
+### Native COSMIC/Wayland results
+
+All ten scenarios passed on 2026-11-16 on Pop!_OS 24.04 with COSMIC/Wayland. No issues were reported.
+
+| Scenario | Result |
+| --- | --- |
+| Ctrl+K shortcut | PASS |
+| Search and filtering | PASS |
+| Keyboard and mouse | PASS |
+| Shortcut restrictions | PASS |
+| Canvas placement | PASS |
+| Crowded canvas | PASS |
+| Undo/redo and dirty state | PASS |
+| Save and recovery | PASS |
+| Exports | PASS |
+| Minimum window | PASS |
+
+### Native COSMIC/Wayland checklist
+
+To repeat the checks, launch the release build or run `npm run desktop:dev` from a COSMIC desktop terminal.
+
+1. Open **Add Node** with the mouse on the editable canvas. Check that the search field receives focus, all five catalog types have their icons, and searching `  hTtP  ` shows HTTP Request. Search for an unknown name and verify that the empty message is visible and Enter creates no node. Clear the search and click a result.
+2. Enable **Architect View** and press **Ctrl+K** from the canvas. Verify that ↑ and ↓ move the highlight, wrap at the ends, and keep the highlighted result visible. Press Enter and confirm the picker closes, focus moves to the new tile, and its inspector opens. Reopen and press Escape. Confirm focus returns to **Add Node** and the current selection stays in place.
+3. Verify **Ctrl+K** leaves a focused documentation draft and its text shortcuts alone. Try it with Architect View off, during a click-to-connect gesture, and with a native Open, Save As, or export dialog active. Switch to Client View and Presentation Mode and verify that the shortcut stays inactive and Escape still exits Presentation Mode.
+4. Pan away from the graph origin and zoom in. Add a node into empty space, then add another. Verify the first appears near the visible center, the second uses nearby free space when available, and the previous nodes and viewport keep their positions. Repeat zoomed out. At the 800 × 560 minimum, check the picker, list scrolling, and mouse and keyboard access with the AI review panel open.
+5. Add a Router to a saved project. Check the default icon, color, input, and Success and Error outputs, plus the dirty indicator. Verify Ctrl+Z removes only that addition and clears the indicator. Redo, save, close, and reopen. Check that the ID, position, and metadata survive. Add another node, wait for recovery to write, close, and reopen to restore the unsaved snapshot.
+6. Export PNG and Markdown and copy or save an AI review prompt for the recovered workflow. Verify the quick-added node appears in each and that exporting leaves the open file, unsaved status, and history intact.
+
 ## Phase 4B — AI-assisted architecture review prompt export
 
 Started on 2026-11-16 from a clean worktree at `19bdc74`, after Phase 4A native QA was recorded as complete.

@@ -1,4 +1,4 @@
-import type { Connection, Dimensions, ViewportTransform, XYPosition } from '@vue-flow/core'
+import type { Connection, Dimensions, XYPosition } from '@vue-flow/core'
 import type { WorkflowNode } from './nodeCatalog'
 
 export function canConnect(
@@ -21,20 +21,20 @@ export function canConnect(
 const tileSize = 72
 
 export function findNodePosition(
-  viewport: ViewportTransform,
-  dimensions: Dimensions,
+  project: (point: XYPosition) => XYPosition,
+  { width, height }: Dimensions,
   nodes: readonly WorkflowNode[],
   preferred?: XYPosition,
 ): XYPosition {
-  const { x, y, zoom } = viewport
-  const left = (24 - x) / zoom
-  const top = (24 - y) / zoom
-  const right = Math.max(left, (dimensions.width - 24 - x) / zoom - tileSize)
-  const bottom = Math.max(top, (dimensions.height - 60 - y) / zoom - tileSize)
-  const anchor = preferred ?? {
-    x: (dimensions.width / 2 - x) / zoom - tileSize / 2,
-    y: (dimensions.height / 2 - y) / zoom - tileSize / 2,
-  }
+  const center = project({ x: width / 2, y: height / 2 })
+  const centeredTile = { x: center.x - tileSize / 2, y: center.y - tileSize / 2 }
+  const insetStart = project({ x: 24, y: 24 })
+  const insetEnd = project({ x: width - 24, y: height - 60 })
+  const left = Math.min(insetStart.x, centeredTile.x)
+  const top = Math.min(insetStart.y, centeredTile.y)
+  const right = Math.max(left, insetEnd.x - tileSize)
+  const bottom = Math.max(top, insetEnd.y - tileSize)
+  const anchor = preferred ?? centeredTile
   const near = {
     x: Math.min(right, Math.max(left, anchor.x)),
     y: Math.min(bottom, Math.max(top, anchor.y)),

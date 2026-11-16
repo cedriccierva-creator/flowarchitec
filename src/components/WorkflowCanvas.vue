@@ -5,8 +5,9 @@ import type { Connection, DefaultEdgeOptions, MouseTouchEvent, XYPosition } from
 import { Maximize, Minus, MousePointer2, Plus, Redo2, Undo2 } from 'lucide-vue-next'
 import GraphInspector from './GraphInspector.vue'
 import NodePicker from './NodePicker.vue'
+import VisualSectionLayer from './VisualSectionLayer.vue'
 import WorkflowNode from './WorkflowNode.vue'
-import { clientCard, createWorkflowNode } from '../data/nodeCatalog'
+import { architectTile, clientCard, createWorkflowNode } from '../data/nodeCatalog'
 import type { NodeKind, WorkflowNodeData } from '../data/nodeCatalog'
 import { isDesktop } from '../data/desktop'
 import { reviewModes } from '../data/exportReviewPrompt'
@@ -14,13 +15,15 @@ import { captureWorkflow, materializeEdge, materializeNode, untitled } from '../
 import type { NodeDocumentation, NodeDocumentationField, OverviewField, ProjectOverview, WorkflowDocument } from '../data/workflowDocument'
 import { useWorkflowSession } from '../composables/useWorkflowSession'
 import { canConnect, findNodePosition } from '../data/workflowGraph'
+import { createSection } from '../data/visualSections'
+import type { VisualSection } from '../data/visualSections'
 
 const {
   addEdges, addNodes, addSelectedNodes, connectionClickStartHandle, dimensions, edges, endConnection,
-  findNode, fitView, getNodesInitialized, getSelectedEdges, getSelectedNodes, nodes, onClickConnectStart,
+  findNode, fitBounds, fitView, getNodesInitialized, getSelectedEdges, getSelectedNodes, nodes, onClickConnectStart,
   onConnect, onConnectEnd, onConnectStart, onEdgeUpdate,
   onEdgeUpdateEnd, onEdgeUpdateStart, onNodeDragStart, onNodeDragStop, onNodesInitialized, project,
-  removeEdges, removeNodes, removeSelectedElements, setEdges, setNodes, setViewport, updateEdge, updateNode,
+  removeEdges, removeNodes, removeSelectedElements, screenToFlowCoordinate, setEdges, setNodes, setViewport, updateEdge, updateNode,
   updateNodeData, updateNodeInternals, viewport, vueFlowRef, zoomIn, zoomOut,
 } = useVueFlow()
 
@@ -36,6 +39,12 @@ const exitPresentationButton = ref<HTMLButtonElement>()
 const overview = shallowRef<ProjectOverview>()
 const nodeDocumentation = reactive(new Map<string, NodeDocumentation>())
 const edgeDescriptions = reactive(new Map<string, string>())
+const sections = shallowRef<readonly VisualSection[]>([])
+const sectionLayer = ref<InstanceType<typeof VisualSectionLayer>>()
+const selectedSectionId = ref<string>()
+const selectedSection = computed(() => sections.value.find(({ id }) => id === selectedSectionId.value))
+const sectionsEditable = computed(() => architectView.value && !clientView.value && !presenting.value)
+const sectionGesture = ref(false)
 const pickerOpen = ref(false)
 const picker = ref<InstanceType<typeof NodePicker>>()
 const addButton = ref<HTMLButtonElement>()
@@ -58,6 +67,7 @@ const defaultEdgeOptions: DefaultEdgeOptions = {
 
 let nextNodeId = 1
 let nextEdgeId = 1
+let nextSectionId = 1
 let fitOnInitialize = false
 let reconnectingEdgeId: string | undefined
 let activeConnection: MouseTouchEvent | undefined
@@ -71,16 +81,19 @@ const {
 } = useWorkflowSession(
   () => captureWorkflow(
     { name: projectName.value, overview: overview.value }, nodes.value, edges.value, nodeDocumentation, edgeDescriptions,
+    sections.value,
   ),
   applyDocument,
-  () => Boolean(activeNodeDrag.value),
+  () => Boolean(activeNodeDrag.value || sectionGesture.value),
 )
 
-function nextId(type: 'node' | 'edge') {
+function nextId(type: 'node' | 'edge' | 'section') {
   let id: string
   do {
-    id = type === 'node' ? `node-${nextNodeId++}` : `edge-${nextEdgeId++}`
-  } while (findNode(id) || edges.value.some((edge) => edge.id === id))
+    if (type === 'node') id = `node-${nextNodeId++}`
+    else if (type === 'edge') id = `edge-${nextEdgeId++}`
+    else id = `section-${nextSectionId++}`
+  } while (findNode(id) || edges.value.some((edge) => edge.id === id) || sections.value.some((section) => section.id === id))
   return id
 }
 
@@ -106,6 +119,7 @@ onEdgeUpdate(({ edge, connection }) => {
 })
 onEdgeUpdateEnd(() => { reconnectingEdgeId = undefined })
 onNodeDragStart(({ event, nodes }) => {
+  selectedSectionId.value = undefined
   recordEdit()
   activeNodeDrag.value = { event, positions: nodes.map(({ id, position }) => ({ id, position: { ...position } })) }
 })
@@ -115,9 +129,9 @@ onNodeDragStop(() => {
   recordEdit()
 })
 function fitInitializedGraph() {
-  if (!fitOnInitialize || !nodes.value.length || getNodesInitialized.value.length !== nodes.value.length) return
+  if (!fitOnInitialize || getNodesInitialized.value.length !== nodes.value.length) return
   fitOnInitialize = false
-  void fitView(fitOptions)
+  void fitWorkflow()
 }
 
 onNodesInitialized(fitInitializedGraph)
@@ -131,8 +145,63 @@ const pickerBlocked = computed(() => busy.value || exporting.value || clientView
 watch(pickerBlocked, (blocked) => { if (blocked) closePicker(false) })
 
 function canUsePicker() {
-  return !pickerBlocked.value && !activeNodeDrag.value && !activeConnection && !reconnectingEdgeId
+  return !pickerBlocked.value && !activeNodeDrag.value && !sectionGesture.value && !activeConnection && !reconnectingEdgeId
     && !connectionClickStartHandle.value
+}
+
+function canEditSection() {
+  return sectionsEditable.value && canUsePicker()
+}
+
+function fitWorkflow() {
+  if (sectionGesture.value) return
+  if (!sections.value.length) return fitView(fitOptions)
+  let left = Infinity, top = Infinity, right = -Infinity, bottom = -Infinity
+  function include({ x, y }: XYPosition, width: number, height: number) {
+    left = Math.min(left, x)
+    top = Math.min(top, y)
+    right = Math.max(right, x + width)
+    bottom = Math.max(bottom, y + height)
+  }
+  const tile = clientView.value ? clientCard : architectTile
+  for (const { position } of nodes.value) include(position, tile.width, tile.height)
+  for (const { position, width, height } of sections.value) include(position, width, height)
+  return fitBounds({ x: left, y: top, width: right - left, height: bottom - top }, fitOptions)
+}
+
+function selectSection(id: string) {
+  if (!canEditSection()) return
+  closePicker(false)
+  removeSelectedElements()
+  selectedSectionId.value = id
+}
+
+function clearCanvasOverlay() {
+  closePicker(false)
+  selectedSectionId.value = undefined
+}
+
+watch(() => getSelectedNodes.value.length + getSelectedEdges.value.length, (count) => {
+  if (count) selectedSectionId.value = undefined
+})
+watch(sectionsEditable, (editable) => {
+  if (editable) return
+  sectionLayer.value?.cancelGesture()
+  selectedSectionId.value = undefined
+})
+
+async function addSection() {
+  if (!canEditSection()) return
+  const section = createSection(nextId('section'), dimensions.value, viewport.value.zoom, project)
+  sections.value = [...sections.value, section]
+  selectSection(section.id)
+  await nextTick()
+  sectionLayer.value?.focusSection(section.id)
+}
+
+function updateSection(id: string | undefined, changes: Partial<Omit<VisualSection, 'id'>>) {
+  if (!id) return
+  sections.value = sections.value.map((section) => section.id === id ? { ...section, ...changes } : section)
 }
 
 function openPicker() {
@@ -151,10 +220,10 @@ function addFromPicker(kind: NodeKind) {
 }
 
 function switchView() {
-  if (busy.value || activeNodeDrag.value || activeConnection || reconnectingEdgeId) return
+  if (busy.value || activeNodeDrag.value || sectionGesture.value || activeConnection || reconnectingEdgeId) return
   const focused = document.activeElement
   if (focused instanceof HTMLElement && focused.closest('input, textarea')) focused.blur()
-  closePicker(false)
+  clearCanvasOverlay()
   endConnection(undefined, true)
   removeSelectedElements()
   clientView.value = !clientView.value
@@ -173,7 +242,7 @@ async function addNode(kind: NodeKind, copy?: WorkflowNodeData, preferred?: XYPo
   if (copy) {
     node.data = { ...copy, label: `${copy.label.slice(0, 75)} copy`, outputs: copy.outputs.map((port) => ({ ...port })) }
   }
-  closePicker(false)
+  clearCanvasOverlay()
   removeSelectedElements()
   addNodes(node)
   if (documentation) nodeDocumentation.set(node.id, { ...documentation })
@@ -227,6 +296,13 @@ function editOverview(field: OverviewField, value: string | undefined) {
 }
 
 function deleteSelection() {
+  if (sectionGesture.value) return
+  if (selectedSection.value) {
+    sections.value = sections.value.filter(({ id }) => id !== selectedSectionId.value)
+    selectedSectionId.value = undefined
+    vueFlowRef.value?.focus({ preventScroll: true })
+    return
+  }
   const selectedNodes = getSelectedNodes.value
   const selectedEdges = getSelectedEdges.value
   const nodeIds = new Set(selectedNodes.map(({ id }) => id))
@@ -240,7 +316,9 @@ function deleteSelection() {
 }
 
 function closeInspector() {
-  if (selectedNode.value || selectedEdge.value) removeSelectedElements()
+  if (sectionGesture.value) return
+  if (selectedSection.value) selectedSectionId.value = undefined
+  else if (selectedNode.value || selectedEdge.value) removeSelectedElements()
   else architectView.value = false
 }
 
@@ -281,6 +359,8 @@ function onEscape(event: KeyboardEvent) {
     setPresentation(false)
   } else if (clientView.value) {
     return
+  } else if (sectionGesture.value) {
+    sectionLayer.value?.cancelGesture()
   } else if (activeConnection) {
     connectionCancelled = true
     releaseGesture(activeConnection)
@@ -294,6 +374,9 @@ function onEscape(event: KeyboardEvent) {
     for (const { id, position } of positions) updateNode(id, { position })
   } else if (pickerOpen.value) {
     closePicker()
+  } else if (selectedSection.value) {
+    closeInspector()
+    vueFlowRef.value?.focus({ preventScroll: true })
   } else if (getSelectedNodes.value.length || getSelectedEdges.value.length) {
     if (event.target instanceof HTMLInputElement && event.target.closest('.graph-inspector')) {
       const label = selectedNode.value?.data.label ?? selectedEdge.value?.label
@@ -316,7 +399,7 @@ function onShortcut(event: KeyboardEvent) {
     onEscape(event)
     return
   }
-  if (clientView.value || presenting.value || busy.value || activeNodeDrag.value || activeConnection || reconnectingEdgeId
+  if (clientView.value || presenting.value || busy.value || activeNodeDrag.value || sectionGesture.value || activeConnection || reconnectingEdgeId
     || (event.target instanceof HTMLElement
       && (event.target.isContentEditable || event.target.closest('input, textarea, select, .node-picker')))) return
 
@@ -330,7 +413,7 @@ function onShortcut(event: KeyboardEvent) {
     if (key === 'y' || event.shiftKey) redo()
     else undo()
   } else if (!event.ctrlKey && !event.altKey && !event.metaKey && (key === 'delete' || key === 'backspace')) {
-    if (!getSelectedNodes.value.length && !getSelectedEdges.value.length) return
+    if (!selectedSection.value && !getSelectedNodes.value.length && !getSelectedEdges.value.length) return
     event.preventDefault()
     deleteSelection()
   }
@@ -346,11 +429,12 @@ function renameProject(event: Event) {
 }
 
 function applyDocument(document: WorkflowDocument, fit = false) {
-  closePicker(false)
+  clearCanvasOverlay()
   endConnection(undefined, true)
   removeSelectedElements()
   projectName.value = document.metadata.name
   overview.value = document.metadata.overview
+  sections.value = document.sections ?? []
   nodeDocumentation.clear()
   edgeDescriptions.clear()
   for (const { id, documentation } of document.nodes) {
@@ -359,11 +443,11 @@ function applyDocument(document: WorkflowDocument, fit = false) {
   for (const { id, description } of document.edges) {
     if (description !== undefined) edgeDescriptions.set(id, description)
   }
-  fitOnInitialize = fit && document.nodes.length > 0
+  fitOnInitialize = fit && (document.nodes.length > 0 || sections.value.length > 0)
   setEdges([])
   setNodes(document.nodes.map(materializeNode))
   setEdges(document.edges.map(materializeEdge))
-  if (fit && !document.nodes.length) void setViewport({ x: 0, y: 0, zoom: 1 })
+  if (fit && !document.nodes.length && !sections.value.length) void setViewport({ x: 0, y: 0, zoom: 1 })
   if (fitOnInitialize) {
     void nextTick(() => {
       updateNodeInternals()
@@ -376,7 +460,10 @@ function applyDocument(document: WorkflowDocument, fit = false) {
 <template>
   <section
     class="workspace" :class="{ 'is-client-view': clientView, 'is-presenting': presenting }"
-    :style="{ '--client-card-width': `${clientCard.width}px`, '--client-card-height': `${clientCard.height}px` }"
+    :style="{
+      '--client-card-width': `${clientCard.width}px`, '--client-card-height': `${clientCard.height}px`,
+      '--architect-tile-width': `${architectTile.width}px`, '--architect-tile-height': `${architectTile.height}px`,
+    }"
     :aria-label="clientView ? 'Client workflow canvas' : 'Workflow planning canvas'"
     @pointerdown.capture="commitDocumentationBeforePointerAction"
   >
@@ -420,6 +507,9 @@ function applyDocument(document: WorkflowDocument, fit = false) {
           </div>
           <button class="reset-button" type="button" :disabled="busy" :aria-pressed="architectView" @click="architectView = !architectView">
             Architect View
+          </button>
+          <button v-if="sectionsEditable" class="reset-button" type="button" :disabled="pickerBlocked || sectionGesture" @click="addSection">
+            <Plus :size="15" aria-hidden="true" />Add Section
           </button>
           <button class="reset-button" type="button" :disabled="busy" @click="newProject(true)">Load demo</button>
         </template>
@@ -506,12 +596,20 @@ function applyDocument(document: WorkflowDocument, fit = false) {
         :max-zoom="2"
         :delete-key-code="null"
         :zoom-on-double-click="false"
-        @pane-click="closePicker(false)"
-        @node-click="closePicker(false)"
-        @edge-click="closePicker(false)"
+        @pane-click="clearCanvasOverlay"
+        @node-click="clearCanvasOverlay"
+        @edge-click="clearCanvasOverlay"
       >
         <template #node-workflow="nodeProps">
           <WorkflowNode :data="nodeProps.data" :selected="nodeProps.selected" :client="clientView" />
+        </template>
+
+        <template #zoom-pane>
+          <VisualSectionLayer
+            v-if="sections.length" ref="sectionLayer" :sections="sections" :selected-id="selectedSectionId"
+            :editable="sectionsEditable" :can-start="canEditSection" :project="screenToFlowCoordinate"
+            @select="selectSection" @gesture="sectionGesture = $event" @update="updateSection"
+          />
         </template>
 
         <Panel v-if="!clientView" position="top-left" class="canvas-note">
@@ -521,8 +619,8 @@ function applyDocument(document: WorkflowDocument, fit = false) {
 
         <Panel v-if="!clientView && !pickerOpen && (architectView || selectedNode || selectedEdge)" position="top-right" class="inspector-panel nopan nowheel">
           <GraphInspector
-            :key="selectedNode?.id ?? selectedEdge?.id ?? ''"
-            :node="selectedNode" :edge="selectedEdge" :architect="architectView"
+            :key="selectedSection?.id ?? selectedNode?.id ?? selectedEdge?.id ?? ''"
+            :node="selectedNode" :edge="selectedEdge" :section="selectedSection" :architect="architectView"
             :node-documentation="selectedNode && nodeDocumentation.get(selectedNode.id)"
             :edge-description="selectedEdge && edgeDescriptions.get(selectedEdge.id)"
             :overview="overview"
@@ -532,6 +630,7 @@ function applyDocument(document: WorkflowDocument, fit = false) {
             @update-node-documentation="editNodeDocumentation"
             @update-edge-description="editEdgeDescription"
             @update-overview="editOverview"
+            @update-section="updateSection(selectedSectionId, $event)"
             @duplicate="duplicateNode"
             @delete="deleteSelection"
           />
@@ -553,7 +652,7 @@ function applyDocument(document: WorkflowDocument, fit = false) {
               <Plus :size="16" aria-hidden="true" />
             </button>
             <span class="control-divider" aria-hidden="true"></span>
-            <button type="button" aria-label="Fit workflow to view" title="Fit workflow to view" @click="fitView(fitOptions)">
+            <button type="button" aria-label="Fit workflow to view" title="Fit workflow to view" @click="fitWorkflow">
               <Maximize :size="15" aria-hidden="true" />
             </button>
           </div>

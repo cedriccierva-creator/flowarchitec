@@ -1,4 +1,6 @@
 import type { WorkflowDocument } from './workflowDocument'
+import { nodeColors } from './nodeCatalog'
+import { sectionMembers } from './visualSections'
 
 function plainText(value: string): string {
   return value.replace(/\r\n?/g, '\n').split('\n').map((line) => {
@@ -15,7 +17,8 @@ function field(title: string, value?: string): string {
 }
 
 export function exportMarkdown(workflow: WorkflowDocument): string {
-  const { metadata, nodes, edges } = workflow
+  const { metadata, nodes, edges, sections = [] } = workflow
+  const members = sectionMembers(sections, nodes)
   const { overview } = metadata
   const incoming = new Set(edges.map(({ target }) => target))
   const outgoing = new Map<string, number>()
@@ -41,6 +44,19 @@ export function exportMarkdown(workflow: WorkflowDocument): string {
       ? 'Nodes without incoming connections: ' + (nodes.length - incoming.size) + '\n'
         + 'Nodes with multiple outgoing connections: ' + branches
       : 'The workflow is empty.'),
+    '## Visual Sections\n',
+    ...(!sections.length ? ['No visual sections.\n'] : sections.flatMap(({ id, title, description, color }) => {
+      const associated = members.get(id)!
+      return [
+        '### ' + plainText(title) + '\n',
+        field('Section ID', id),
+        ...(description ? [field('Description', description)] : []),
+        field('Color', nodeColors[color].label),
+        '**Associated nodes**\n\n' + (associated.length
+          ? associated.map((node) => '- ' + plainText(node.id) + ' · ' + plainText(node.label)).join('\n')
+          : 'No associated nodes.') + '\n',
+      ]
+    })),
     '## Node Documentation\n',
     ...(!nodes.length ? ['No nodes.\n'] : nodes.flatMap((node, index) => [
       '### Node ' + (index + 1) + '\n',

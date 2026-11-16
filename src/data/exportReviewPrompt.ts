@@ -1,4 +1,5 @@
 import type { WorkflowDocument } from './workflowDocument'
+import { sectionMembers } from './visualSections'
 
 export const reviewModes = {
   architecture: {
@@ -18,7 +19,8 @@ export const reviewModes = {
 export type ReviewMode = keyof typeof reviewModes
 
 export function exportReviewPrompt(workflow: WorkflowDocument, mode: ReviewMode): string {
-  const { metadata: { name, overview }, nodes, edges } = workflow
+  const { metadata: { name, overview }, nodes, edges, sections = [] } = workflow
+  const members = sectionMembers(sections, nodes)
   const evidence = {
     project: {
       name,
@@ -42,6 +44,9 @@ export function exportReviewPrompt(workflow: WorkflowDocument, mode: ReviewMode)
       label: label ?? null,
       description: description ?? null,
     })),
+    sections: sections.map(({ id, title, description }) => ({
+      id, title, description: description ?? null, nodeIds: members.get(id)!.map((node) => node.id),
+    })),
   }
   // JSON escapes newlines within strings so workflow text cannot open or close the Markdown fence.
   // Escape markup and directional controls as JSON Unicode escapes to keep them literal.
@@ -61,6 +66,7 @@ export function exportReviewPrompt(workflow: WorkflowDocument, mode: ReviewMode)
     '## Review Instructions',
     '',
     '- FlowArchitect is an architecture design tool. It does not execute the automation or provide evidence of runtime behavior.',
+    '- Visual sections are planning annotations. Their node associations come from canvas geometry and do not define executable containers, connections, or runtime behavior.',
     '- Ground findings in the supplied workflow. Cite the relevant node IDs and edge IDs exactly as listed and explain the evidence for each finding.',
     '- Distinguish confirmed design problems from potential risks. Identify missing information and ask questions instead of inventing details. A null field means the information was not supplied.',
     '- Prioritize findings by severity (Critical, High, Medium, or Low) and explain practical improvements in the context of the project goals and constraints.',

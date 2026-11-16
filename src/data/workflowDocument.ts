@@ -3,6 +3,8 @@ import { createWorkflowNode, nodeCatalog, nodeColors, nodeIcons } from './nodeCa
 import type { NodeColor, NodeIcon, NodeKind, WorkflowNode } from './nodeCatalog'
 import { createSampleEdges, createSampleNodes, errorEdgeStyle } from './sampleWorkflow'
 import { canConnect } from './workflowGraph'
+import { maximumSectionSize, minimumSection, sectionDescriptionLimit, sectionPositionLimit, sectionTitleLimit } from './visualSections'
+import type { VisualSection } from './visualSections'
 
 export const overviewFields = ['summary', 'goals', 'assumptions', 'constraints'] as const
 export const nodeDocumentationFields = ['purpose', 'inputs', 'outputs', 'configuration', 'errorHandling'] as const
@@ -48,9 +50,14 @@ export interface WorkflowDocument {
   metadata: ProjectMetadata
   nodes: DocumentNode[]
   edges: DocumentEdge[]
+  sections?: VisualSection[]
 }
 
 export const untitled = 'Untitled workflow'
+
+function copySection({ id, title, description, color, position, width, height }: VisualSection): VisualSection {
+  return { id, title, description, color, position: { ...position }, width, height }
+}
 
 export function captureWorkflow(
   metadata: ProjectMetadata,
@@ -58,6 +65,7 @@ export function captureWorkflow(
   edges: readonly Edge[],
   nodeDocumentation?: ReadonlyMap<string, NodeDocumentation>,
   edgeDescriptions?: ReadonlyMap<string, string>,
+  sections: readonly VisualSection[] = [],
 ): WorkflowDocument {
   return {
     schemaVersion: 1,
@@ -74,6 +82,7 @@ export function captureWorkflow(
       appearance: typeof style === 'object' && style.stroke === errorEdgeStyle.stroke ? 'error' : undefined,
       description: edgeDescriptions?.get(id),
     })),
+    sections: sections.length ? sections.map(copySection) : undefined,
   }
 }
 
@@ -131,6 +140,23 @@ export function readBusinessDescription(value: unknown): string | undefined {
   return readClientText(value, 'Business description', businessDescriptionLimit)
 }
 
+export function readSectionTitle(value: unknown): string | undefined {
+  const title = readClientText(value, 'Section title', sectionTitleLimit)
+  if (title?.includes('\n')) throw new Error('Section title must be a single line.')
+  return title
+}
+
+export function readSectionDescription(value: unknown): string | undefined {
+  return readClientText(value, 'Section description', sectionDescriptionLimit)
+}
+
+function sectionNumber(value: unknown, min: number, max: number) {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < min || value > max) {
+    throw new Error('Invalid section position or dimensions.')
+  }
+  return value
+}
+
 function readNotes<K extends string>(value: unknown, fields: readonly K[]): Partial<Record<K, string>> | undefined {
   if (value === undefined) return undefined
   const raw = asRecord(value, 'Invalid documentation structure.')
@@ -169,7 +195,7 @@ export function parseWorkflow(json: string): WorkflowDocument {
   const ids = new Set<string>()
   function uniqueId(value: unknown) {
     const id = boundedText(value, 128)
-    if (!/^[a-zA-Z0-9_-]+$/.test(id) || Object.hasOwn(Object.prototype, id)) throw new Error('Invalid node or connection ID.')
+    if (!/^[a-zA-Z0-9_-]+$/.test(id) || Object.hasOwn(Object.prototype, id)) throw new Error('Invalid workflow item ID.')
     if (ids.has(id)) throw new Error('The workflow contains duplicate IDs.')
     ids.add(id)
     return id
@@ -214,5 +240,22 @@ export function parseWorkflow(json: string): WorkflowDocument {
       description: readDocumentationText(edge.description),
     }
   })
-  return { schemaVersion: 1, metadata: { name, overview }, nodes, edges }
+  if (raw.sections !== undefined && !Array.isArray(raw.sections)) throw new Error('Invalid visual sections.')
+  const sections = raw.sections?.map((value: unknown): VisualSection => {
+    const section = asRecord(value, 'Invalid visual section.')
+    const position = asRecord(section.position, 'Invalid section position.')
+    const title = readSectionTitle(section.title)
+    if (!title) throw new Error('A section title is required.')
+    if (typeof section.color !== 'string' || !Object.hasOwn(nodeColors, section.color)) throw new Error('Unknown section color.')
+    return {
+      id: uniqueId(section.id), title, description: readSectionDescription(section.description), color: section.color as NodeColor,
+      position: {
+        x: sectionNumber(position.x, -sectionPositionLimit, sectionPositionLimit),
+        y: sectionNumber(position.y, -sectionPositionLimit, sectionPositionLimit),
+      },
+      width: sectionNumber(section.width, minimumSection.width, maximumSectionSize),
+      height: sectionNumber(section.height, minimumSection.height, maximumSectionSize),
+    }
+  })
+  return { schemaVersion: 1, metadata: { name, overview }, nodes, edges, sections: sections?.length ? sections : undefined }
 }

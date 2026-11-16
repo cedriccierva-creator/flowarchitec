@@ -69,6 +69,13 @@ Network access to npm and Rust crate sources is needed for a fresh build. The co
 - Notes accept multiline plain text. Tab or click away to commit one field edit to project history. **Escape** in a note restores its last committed text. Inside the field, Enter inserts a line break, and the usual text-editing shortcuts apply. Save, project switches, and normal window close also commit a focused note.
 - Recovery captures committed notes after the usual 500 ms delay. A forced exit can lose text still being edited in a focused field or committed too recently for the snapshot to finish.
 
+## Visual Sections
+
+- Enable **Architect View** and click **Add Section**. The new section appears near the visible canvas center. Click its title to edit the title, description, and color in the inspector. Drag the title to move it, or drag the lower-right handle to resize it to at least 160 × 100 graph units. Escape cancels a move or resize in progress.
+- Drag the empty tinted area to pan. Nodes and connections remain independently editable across section boundaries. **Delete section** removes the annotation and leaves its nodes and connections in place. **Fit workflow to view** includes section bounds.
+- Markdown and AI review membership uses the center of the compact Architect tile, including points exactly on a section border. When sections overlap, the last containing section in the saved array wins. New sections are appended on top. Selecting or editing a section preserves its stacking order and never changes node or edge data.
+- Client View and Presentation Mode show the section boundaries, titles, and description previews. The Architect canvas scales section text with the diagram. Long text can be shortened in the canvas and PNG preview, with full text available in the inspector, Markdown, and AI review evidence.
+
 ## Client View and Presentation Mode
 
 - Turn on **Architect View** and select a node. In the inspector’s **Client View** section, enter a **Client label** and **Business description**. Tab or click away to commit each field. Escape restores its last committed text. Duplicating a node copies both fields.
@@ -80,6 +87,7 @@ Network access to npm and Rust crate sources is needed for a fresh build. The co
 
 - **Export PNG** creates the complete Client View diagram from either workflow view, including nodes outside the viewport. It keeps the current layout, port-specific curves, icons, colors, and two-line client text previews on a padded charcoal background. It uses 2× pixel density when the image fits within 8,192 pixels per side and 16 megapixels. Larger diagrams scale down to fit those limits.
 - **Export Markdown** writes the project overview, a topology summary, node documentation, and connection documentation in workflow order. It preserves multiline notes and escapes Markdown formatting in project text. Empty technical fields appear as **Not documented.**
+- PNG includes the full section bounds, including on a canvas with sections only. Markdown lists section titles, descriptions, colors, and associated node IDs and labels under **Visual Sections**.
 - Both buttons use the Linux desktop save dialog. The suggested filename comes from the project title. Keep the `.png` or `.md` extension when renaming it. The dialog confirms before replacing an existing file. Either format can export an empty workflow.
 - Export reads committed fields, including unsaved project edits. Finish editing a draft field with Tab before exporting it. Exports operate offline and leave the open project, its file path, undo history, and recovery state in place. The buttons are available outside Presentation Mode.
 
@@ -88,6 +96,7 @@ Network access to npm and Rust crate sources is needed for a fresh build. The co
 - In the Linux desktop app, enable **Architect View**, open **AI Review Prompt**, and choose **Architecture Review**, **Reliability & Error Handling**, or **Data Flow & Handoffs**.
 - **Copy Review Prompt** writes the prompt to the desktop clipboard. **Save Review Prompt as Markdown** uses the native save dialog. FlowArchitect generates the prompt locally and you choose where to submit it. Assess any returned findings against the actual workflow before acting on them.
 - The prompt includes project notes, every node and connection in workflow order, and their IDs for citing evidence. It treats imported notes as data and preserves multiline content as escaped JSON strings in a Markdown code block. FlowArchitect omits the open project’s file path and recovery metadata. Review your own notes for sensitive details before sharing.
+- Visual section evidence includes the section ID, title, description, and associated node IDs. The prompt identifies sections as visual planning annotations and explains that their associations come from geometry.
 - The character estimate warns at 50,000 characters. Copy and save still include the full workflow. As with other exports, commit any draft field you want included. Generating, copying, or saving a review prompt adds no project edits.
 
 ## Project files, recovery, and history
@@ -96,6 +105,7 @@ Network access to npm and Rust crate sources is needed for a fresh build. The co
 - **Save** writes to the current file, or prompts for a location on the first save. **Save As…** chooses a destination, and **Open…** validates a local workflow before switching. The canvas footer shows the current filename and unsaved status. Hover over it for the full path.
 - Workflow JSON uses `schemaVersion: 1` and stores the project name, nodes, positions, icons, colors, connections, and labels. Documentation is optional under `metadata.overview`, `nodes[].documentation`, and `edges[].description`. Phase 2B files open with empty fields. Blank notes are omitted on save. Each note supports up to 8,000 UTF-16 code units. Files must be UTF-8 and at most 8 MiB. Saving writes a temporary file beside the destination and atomically renames it into place on Linux.
 - Client metadata uses optional `nodes[].clientLabel` and `nodes[].businessDescription` fields. Labels are single-line text up to 80 UTF-16 code units, and descriptions allow up to 240. Blank values are omitted from JSON. Phase 2B and 3A files use the technical node names in Client View. Client metadata participates in save, reopen, undo, redo, and recovery alongside technical notes.
+- Visual sections use the optional version 1 `sections` array alongside `nodes` and `edges`. Each entry stores its ID, title, optional description, color, graph position, width, and height. Array order determines stacking. Titles allow 80 UTF-16 code units and descriptions allow 240. Earlier workflow files load with zero sections. Use a Phase 5B or later build to preserve sections when re-saving a file.
 - Unsaved edits are written after 500 ms of inactivity to snapshots under Tauri's application-data `recovery` folder. On Linux this is normally `~/.local/share/io.flowarchitect.desktop/recovery/`. Switching projects or closing the window flushes pending edits. Snapshots are offered at startup. **Restore as unsaved** loads a copy that needs an explicit file destination, and **Discard snapshot** permanently removes the selected snapshot after confirmation.
 - **Ctrl+Z** undoes an edit. **Ctrl+Shift+Z** and **Ctrl+Y** redo. The workspace keeps up to 80 undo steps in memory per open workflow. A drag counts as one step, and text fields keep their own editing shortcuts.
 
@@ -112,6 +122,7 @@ Native file, recovery, and export actions are available in the Linux Tauri app. 
 | `src/data/exportPng.ts`, `src/data/exportMarkdown.ts` | Client diagram rasterization and architecture documentation formatting |
 | `src/data/exportReviewPrompt.ts`, `src-tauri/src/review_clipboard.rs` | Offline review prompt formatting and Linux desktop clipboard support |
 | `src/components/WorkflowNode.vue` | Architect tile, Client View card, and shared connection anchors |
+| `src/components/VisualSectionLayer.vue`, `src/data/visualSections.ts` | Section rendering, pointer gestures, geometry, and export membership |
 | `src/components/NodePicker.vue`, `src/components/GraphInspector.vue` | Searchable picker and contextual editing |
 | `src/components/DocumentationField.vue` | Plain text editing and blur commits |
 | `src/data/nodeCatalog.ts`, `src/data/sampleWorkflow.ts`, `src/data/workflowGraph.ts` | Node definitions, demo graph, connection validation, and node placement |

@@ -1,4 +1,5 @@
 import type { Connection, Dimensions, XYPosition } from '@vue-flow/core'
+import { architectTile } from './nodeCatalog'
 import type { WorkflowNode } from './nodeCatalog'
 
 export function canConnect(
@@ -18,8 +19,6 @@ export function canConnect(
     && edge.target === connection.target && edge.targetHandle === connection.targetHandle)
 }
 
-const tileSize = 72
-
 export function findNodePosition(
   project: (point: XYPosition) => XYPosition,
   { width, height }: Dimensions,
@@ -27,13 +26,13 @@ export function findNodePosition(
   preferred?: XYPosition,
 ): XYPosition {
   const center = project({ x: width / 2, y: height / 2 })
-  const centeredTile = { x: center.x - tileSize / 2, y: center.y - tileSize / 2 }
+  const centeredTile = { x: center.x - architectTile.width / 2, y: center.y - architectTile.height / 2 }
   const insetStart = project({ x: 24, y: 24 })
   const insetEnd = project({ x: width - 24, y: height - 60 })
   const left = Math.min(insetStart.x, centeredTile.x)
   const top = Math.min(insetStart.y, centeredTile.y)
-  const right = Math.max(left, insetEnd.x - tileSize)
-  const bottom = Math.max(top, insetEnd.y - tileSize)
+  const right = Math.max(left, insetEnd.x - architectTile.width)
+  const bottom = Math.max(top, insetEnd.y - architectTile.height)
   const anchor = preferred ?? centeredTile
   const near = {
     x: Math.min(right, Math.max(left, anchor.x)),

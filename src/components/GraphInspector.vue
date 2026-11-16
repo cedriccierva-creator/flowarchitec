@@ -6,12 +6,16 @@ import { nodeColors, nodeIcons } from '../data/nodeCatalog'
 import type { NodeColor, NodeIcon, WorkflowNodeData } from '../data/nodeCatalog'
 import {
   businessDescriptionLimit, clientLabelLimit, nodeDocumentationFields, overviewFields, readBusinessDescription, readClientLabel,
+  readSectionDescription, readSectionTitle,
 } from '../data/workflowDocument'
 import type { NodeDocumentation, NodeDocumentationField, OverviewField, ProjectOverview } from '../data/workflowDocument'
+import { sectionDescriptionLimit, sectionTitleLimit } from '../data/visualSections'
+import type { VisualSection } from '../data/visualSections'
 
 const props = defineProps<{
   node?: GraphNode<WorkflowNodeData>
   edge?: GraphEdge
+  section?: VisualSection
   architect: boolean
   nodeDocumentation?: NodeDocumentation
   edgeDescription?: string
@@ -24,6 +28,7 @@ const emit = defineEmits<{
   updateNodeDocumentation: [field: NodeDocumentationField, value: string | undefined]
   updateEdgeDescription: [value: string | undefined]
   updateOverview: [field: OverviewField, value: string | undefined]
+  updateSection: [data: Partial<Pick<VisualSection, 'title' | 'description' | 'color'>>]
   duplicate: []
   delete: []
 }>()
@@ -59,6 +64,14 @@ function setColor(event: Event) {
   emit('updateNode', { color: value || undefined })
 }
 
+function setSectionColor(event: Event) {
+  emit('updateSection', { color: (event.target as HTMLSelectElement).value as NodeColor })
+}
+
+function normalizeSectionTitle(value: string) {
+  return readSectionTitle(value) ?? props.section?.title
+}
+
 function labelEdge(event: Event) {
   const input = event.target as HTMLInputElement
   input.value = input.value.trim()
@@ -76,7 +89,7 @@ function commitInput(event: KeyboardEvent) {
     role="region" aria-labelledby="graph-inspector-title"
   >
     <header class="editor-heading">
-      <h2 id="graph-inspector-title">{{ node ? 'Edit node' : edge ? 'Edit connection' : 'Project overview' }}</h2>
+      <h2 id="graph-inspector-title">{{ section ? 'Edit section' : node ? 'Edit node' : edge ? 'Edit connection' : 'Project overview' }}</h2>
       <button class="editor-close" type="button" aria-label="Close inspector" @click="emit('close')">
         <X :size="15" aria-hidden="true" />
       </button>
@@ -111,7 +124,25 @@ function commitInput(event: KeyboardEvent) {
       </label>
       <p class="editor-hint">Drag either highlighted endpoint to reconnect.</p>
     </template>
-    <template v-if="architect">
+    <template v-else-if="section">
+      <DocumentationField
+        label="Section title" placeholder="Give this stage a name" :value="section.title"
+        single-line :limit="sectionTitleLimit" :normalize="normalizeSectionTitle"
+        @commit="emit('updateSection', { title: $event })"
+      />
+      <DocumentationField
+        label="Section description" placeholder="Explain this stage" :value="section.description"
+        :limit="sectionDescriptionLimit" :normalize="readSectionDescription"
+        @commit="emit('updateSection', { description: $event })"
+      />
+      <label class="editor-field">
+        Color
+        <select :value="section.color" @change="setSectionColor">
+          <option v-for="(item, key) in nodeColors" :key="key" :value="key">{{ item.label }}</option>
+        </select>
+      </label>
+    </template>
+    <template v-if="architect && !section">
       <template v-if="node">
         <h3 class="editor-section-title">Technical documentation</h3>
         <DocumentationField
@@ -143,12 +174,12 @@ function commitInput(event: KeyboardEvent) {
         />
       </template>
     </template>
-    <div v-if="node || edge" class="editor-actions">
+    <div v-if="node || edge || section" class="editor-actions">
       <button v-if="node" class="reset-button" type="button" @click="emit('duplicate')">
         <Copy :size="13" aria-hidden="true" />Duplicate
       </button>
       <button class="reset-button editor-delete" type="button" @click="emit('delete')">
-        <Trash2 :size="13" aria-hidden="true" />{{ node ? 'Delete node' : 'Delete edge' }}
+        <Trash2 :size="13" aria-hidden="true" />{{ section ? 'Delete section' : node ? 'Delete node' : 'Delete edge' }}
       </button>
     </div>
   </div>

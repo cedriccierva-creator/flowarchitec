@@ -41,6 +41,7 @@ export const defaultNodeColors: Record<NodeKind, NodeColor> = {
   webhook: 'amber', http: 'blue', router: 'green', agent: 'violet', error: 'rose',
 }
 
+export const architectTile = { width: 72, height: 72 }
 export const clientCard = { width: 140, height: 88 }
 export const workflowHandleSize = 12
 

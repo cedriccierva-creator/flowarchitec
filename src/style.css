@@ -34,8 +34,29 @@ h1 { margin: 0; font-size: 25px; font-weight: 500; letter-spacing: -0.9px; line-
 .vue-flow { --vf-node-color: #e4dfd5; --vf-connection-path: #d3ac74; --vf-handle: #b7afa0; --vf-edge: #8f8b82; --vf-box-shadow: none; }
 .vue-flow__panel.canvas-note { display: flex; align-items: center; gap: 7px; margin: 20px; color: #aaa295; font-size: 10px; pointer-events: none; }
 .canvas-note-dot { width: 4px; height: 4px; border: 1px solid #aa9473; border-radius: 50%; }
-.vue-flow__node-workflow { width: 72px; height: 72px; border: none; background: none; }
-.workflow-node { width: 72px; height: 72px; position: relative; }
+.vue-flow__node-workflow { width: var(--architect-tile-width); height: var(--architect-tile-height); border: none; background: none; }
+.workflow-node { width: var(--architect-tile-width); height: var(--architect-tile-height); position: relative; }
+.visual-section-layer { position: absolute; inset: 0; z-index: -1; pointer-events: none; }
+.visual-section {
+  position: absolute; padding: 10px; border: 1px solid var(--section-border); border-radius: 8px;
+  background: var(--section-fill); color: #f0e9dd;
+}
+.visual-section.section-selected { border-color: var(--section-accent); }
+.section-title {
+  display: block; width: fit-content; max-width: 100%; padding: 4px 6px; border: 0; border-radius: 4px;
+  background: #27251f; color: inherit; font-size: 15px; font-weight: 650; line-height: 1.2; text-align: left;
+}
+.section-title span, .section-description {
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere;
+}
+.section-description { margin: 4px 6px 0; color: #c3bbae; font-size: 12px; line-height: 1.25; }
+.section-grip { pointer-events: auto; cursor: grab; touch-action: none; }
+.section-grip:active { cursor: grabbing; }
+.section-resize {
+  position: absolute; right: -5px; bottom: -5px; width: 14px; height: 14px;
+  border: 2px solid #27251f; border-radius: 4px; background: var(--section-accent);
+  pointer-events: auto; cursor: nwse-resize; touch-action: none;
+}
 .node-tile { display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; border: 1px solid var(--node-border); border-radius: 17px; background: #292722; color: var(--node-accent); }
 .workflow-node:hover .node-tile { border-color: var(--node-accent); }
 .is-selected .node-tile, .vue-flow__node:focus-visible .node-tile { outline: 2px solid var(--node-accent); outline-offset: 5px; }

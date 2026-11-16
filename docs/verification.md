@@ -1,5 +1,62 @@
 # FlowArchitect verification
 
+## Phase 5B — Free-positioned visual sections
+
+Started on 2026-11-16 from a clean worktree at `4a781e2`, after all ten Phase 5A native checks passed. The workflow document remains `schemaVersion: 1`. Files and recovery snapshots without the optional `sections` array load with zero sections.
+
+### Automated checks
+
+| Check | Result |
+| --- | --- |
+| `npm run build` | Vue and TypeScript checks and the Vite production build passed. |
+| `tests/architect-view.test.cjs` | 42 passed. Six section scenarios and 36 existing scenarios, including the 50-node, 61-edge fixture with five sections. |
+| `cargo test --manifest-path src-tauri/Cargo.toml --locked --offline` | 3 passed. The Rust suite exercises local workflow and export file operations. |
+| `CARGO_NET_OFFLINE=true npm run desktop:build -- -- --locked --offline` | Passed. Produced the standalone Linux executable. |
+| `git diff --check` | Passed. |
+
+The production bundle suite uses jsdom for geometry and input, mocks Tauri clipboard and file commands, and inspects the SVG sent to the mocked PNG rasterizer. It covers selection and defaults, independent moves and minimum-size resizing, Escape cancellation, one-step history, deletion, node-center membership and overlap priority, version 1 validation, recovery, Client View and Presentation Mode, and PNG, Markdown, and AI review exports. The large fixture checks that all 50 nodes, 61 edges, and five sections remain represented. Desktop pointer hit-testing, repaint performance, native dialogs, and encoded pixels are covered by the manual checklist below.
+
+```bash
+npm run build
+qa_dir=$(mktemp -d)
+npm install --prefix "$qa_dir" --no-save --no-package-lock jsdom@30.1.3
+NODE_PATH="$qa_dir/node_modules" node tests/architect-view.test.cjs
+```
+
+### Native COSMIC/Wayland results
+
+All 12 scenarios passed on 2026-11-16 on Pop!_OS 24.04 with COSMIC/Wayland. No issues were reported.
+
+| Scenario | Result |
+| --- | --- |
+| Create and edit sections | PASS |
+| Move and resize | PASS |
+| Pointer interactions | PASS |
+| Overlapping sections | PASS |
+| Undo/redo and deletion | PASS |
+| Save, reopen, and recovery | PASS |
+| Client View and Presentation | PASS |
+| PNG export | PASS |
+| Markdown and AI review | PASS |
+| Large workflow performance | PASS |
+| Minimum window | PASS |
+| Sections-only workflow | PASS |
+
+**Future enhancement (low priority).** Add subtle visual indicators showing where to drag and resize a section.
+
+### Native COSMIC/Wayland checklist
+
+To repeat the checks, launch `./src-tauri/target/release/flowarchitect` or run `npm run desktop:dev` from a COSMIC desktop terminal.
+
+1. **Add and edit.** Open a saved Phase 5A workflow, enable **Architect View**, then use **Add Section** with the mouse and keyboard. Verify the default blue section appears near the visible center. Select its title and edit the title, multiline description, and color. Confirm Ctrl+K still opens the node picker.
+2. **Move, resize, and delete.** Drag the title at multiple zoom levels. Resize from the lower-right handle and try shrinking below 160 × 100 graph units. Press Escape mid-gesture to verify cancellation. Delete via the inspector and via Delete. Confirm both actions leave the underlying nodes and edges intact.
+3. **Canvas hit-testing and membership.** Pan by dragging the empty tint, zoom, and use Fit View. Select and reconnect an edge inside a section. Drag nodes independently across boundaries. For two overlapping sections, verify Markdown and review evidence assign each overlapping node only to the newer, topmost containing section. Move or resize either section and check that exports reflect the new bounds.
+4. **History and persistence.** Verify one undo and redo step per move, resize, edit, or deletion. Verify the dirty indicator returns to clean when undo reaches the saved state. Save, Save As, and reopen. Compare node IDs, positions, edges, and section metadata and order. Edit an unsaved section, wait for recovery, quit, relaunch, and restore the snapshot.
+5. **Client View and Presentation Mode.** Verify section boundaries and text appear alongside client cards. Check that there is no editing UI and that zoom, pan, Fit View, and Escape from presentation behave normally. Return to Architect View and edit a section again.
+6. **Exports.** Export a PNG with a section extending past the graph and verify its full border and title, descriptions, node cards, Bézier curves, and arrowheads. Export Markdown and copy and save a prompt in all three review modes. Check that the section evidence and member IDs match the diagram and that the file path, dirty state, and undo/redo history stay in place.
+7. **Large diagram.** Open the 50-node, 61-edge Order Operations fixture and add several sections across it. Zoom, pan, drag a node, and move and resize sections. Check native responsiveness and verify that the PNG includes the full scene within the 8,192-pixel side and 16-megapixel limits.
+8. **Minimum window and sections-only workflow.** At 800 × 560, verify the toolbar, canvas, inspector, and section grip and resize handle remain usable, including with the AI Review Prompt panel open. Create a project with sections only and verify Fit View, save/reopen, and all three export formats.
+
 ## Phase 5A — Node Search & Quick Add
 
 Started on 2026-11-16 from a clean worktree at `12911bd`, after Phase 4B native QA was complete.

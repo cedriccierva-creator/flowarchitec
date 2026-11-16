@@ -204,11 +204,12 @@ async function launch(t, recoveries = new Map()) {
     mouse(element, 'click')
     await tick()
   }
-  async function drag(from, to, options = {}) {
+  async function drag(from, to, options = {}, intermediate) {
     pointerTarget = from
     mouse(from, 'pointerdown')
     mouse(from, 'mousedown')
     pointerTarget = to
+    if (intermediate) mouse(to, 'mousemove', intermediate)
     mouse(to, 'mousemove', options)
     await tick()
     mouse(to, 'mouseup', options)
@@ -1120,7 +1121,7 @@ test('empty review reports clipboard failures, native save cancellation, and nat
   await app.click('Copy Review Prompt')
   assert.deepEqual(reviewEvidence(app.clipboard.at(-1)), {
     project: { name: 'Untitled workflow', overview: null, goals: null, assumptions: null, constraints: null },
-    nodes: [], edges: [],
+    nodes: [], edges: [], sections: [],
   })
   assert.match(app.clipboard.at(-1), /no graph to assess/)
   app.setExportResponse(false)
@@ -1146,7 +1147,9 @@ test('long review prompts include all 50 nodes and 61 edges in deterministic wor
     id: 'handoff-' + i, source: nodes[i % 49].id, target: nodes[i < 49 ? i + 1 : i - 47].id,
     sourceHandle: 'out', targetHandle: 'in', description: 'Handoff notes ' + i,
   }))
-  await app.open('/orders.json', { schemaVersion: 1, metadata: { name: 'Order Operations' }, nodes, edges })
+  const sections = Array.from({ length: 5 }, (_, index) => stage('stage-' + index, 'Stage ' + (index + 1), index * 1300, 0, 1300, 350))
+  await app.open('/orders.json', { schemaVersion: 1, metadata: { name: 'Order Operations' }, nodes, edges, sections })
+  assert.equal(app.all('.visual-section').length, 5)
   await app.click('Architect View')
   await app.click('AI Review Prompt')
   assert.match(app.query('.review-prompt-long').textContent, /may exceed some model input limits/)
@@ -1161,9 +1164,29 @@ test('long review prompts include all 50 nodes and 61 edges in deterministic wor
   const evidence = reviewEvidence(prompt)
   assert.deepEqual(evidence.nodes.map(({ id, purpose }) => [id, purpose]), nodes.map(({ id, documentation }) => [id, documentation.purpose]))
   assert.deepEqual(evidence.edges, edges.map((edge) => ({ ...edge, label: null })))
+  assert.deepEqual(evidence.sections.map(({ nodeIds }) => nodeIds),
+    sections.map((_, index) => nodes.slice(index * 10, (index + 1) * 10).map(({ id }) => id)))
   await app.click('Save Review Prompt as Markdown')
   assert.equal(app.exports.at(-1).contents, prompt)
   assert.deepEqual(app.networkRequests, [])
+  await app.click('Export PNG')
+  assert.equal(app.raster().width, 8192)
+  assert.equal(app.raster().scene.querySelectorAll('g.visual-section').length, 5)
+  assert.equal(app.raster().scene.querySelectorAll('path[marker-end]').length, 61)
+
+  const pane = app.query('.vue-flow__pane')
+  const layer = app.query('.vue-flow__transformationpane')
+  const initialViewport = layer.style.transform
+  await app.drag(pane, pane, { clientX: 790, clientY: 410 })
+  assert.notEqual(layer.style.transform, initialViewport)
+  const initialNodes = app.all('.vue-flow__node').map((node) => node.style.transform)
+  const section = sectionElement(app, 'stage-0')
+  const initialSection = sectionGeometry(section)
+  pointer(section.querySelector('button'), 'pointerdown', 200, 200)
+  pointer(pane, 'pointerup', 300, 240)
+  await tick()
+  assert.notDeepEqual(sectionGeometry(section), initialSection)
+  assert.deepEqual(app.all('.vue-flow__node').map((node) => node.style.transform), initialNodes)
 })
 
 test('review export uses committed unsaved edits and preserves state, views, and recovery', async (t) => {
@@ -1480,4 +1503,319 @@ test('quick-added IDs and defaults survive history, save, recovery, and all expo
   assert.ok(app.node('node-3'))
   assert.deepEqual(await app.save(), saved)
   assert.deepEqual(await recovered.save(), saved)
+})
+
+function stage(id, title, x, y, width = 400, height = 240) {
+  return { id, title, color: 'blue', position: { x, y }, width, height }
+}
+
+function sectionElement(app, id = 'section-1') {
+  return app.query('.visual-section[data-section-id="' + id + '"]')
+}
+
+function sectionGeometry(element) {
+  return ['left', 'top', 'width', 'height'].map((property) => Number.parseFloat(element.style[property]))
+}
+
+function pointer(target, type, clientX, clientY) {
+  const { PointerEvent } = target.ownerDocument.defaultView
+  return target.dispatchEvent(new PointerEvent(type, {
+    bubbles: true, cancelable: true, pointerId: 1, pointerType: 'mouse', button: 0,
+    clientX, clientY,
+  }))
+}
+
+async function selectStage(app, id) {
+  const grip = sectionElement(app, id).querySelector('button')
+  pointer(grip, 'pointerdown', 200, 200)
+  pointer(grip, 'pointerup', 200, 200)
+  await tick()
+}
+
+async function editSectionText(app, label, value) {
+  app.type(label, value).blur()
+  await tick()
+}
+
+async function sectionReview(app) {
+  if (!app.query('#review-prompt')) await app.click('AI Review Prompt')
+  await app.click('Copy Review Prompt')
+  return reviewEvidence(app.clipboard.at(-1))
+}
+
+test('creates and edits a visible section with Architect defaults and its own inspector', async (t) => {
+  const app = await launch(t)
+  assert.equal(app.button('Add Section'), undefined)
+  await app.click('Architect View')
+  await app.click('Zoom in')
+  const pane = app.query('.vue-flow__pane')
+  await app.drag(pane, pane, { clientX: 720, clientY: 420 })
+  const [x, y, zoom] = app.query('.vue-flow__transformationpane').style.transform.match(/-?[\d.]+/g).map(Number)
+  await app.click('Add Section')
+
+  const section = sectionElement(app)
+  const [left, top, width, height] = sectionGeometry(section)
+  assert.equal(width, 400)
+  assert.equal(height, 240)
+  assert.ok(Math.abs(x + (left + width / 2) * zoom - pane.clientWidth / 2) < 0.01)
+  assert.ok(Math.abs(y + (top + height / 2) * zoom - pane.clientHeight / 2) < 0.01)
+  assert.equal(section.querySelector('.section-title').textContent, 'New Section')
+  assert.equal(section.style.getPropertyValue('--section-accent'), '#92aebe')
+  assert.equal(section.ownerDocument.activeElement, section.querySelector('button'))
+  assert.equal(section.closest('.vue-flow__transformationpane'), app.query('.vue-flow__transformationpane'))
+  assert.equal(section.ownerDocument.defaultView.getComputedStyle(section.closest('.visual-section-layer')).pointerEvents, 'none')
+  assert.equal(app.all('.vue-flow__node, .vue-flow__edge').length, 0)
+  assert.equal(app.isDirty(), true)
+  assert.equal(app.field('Section title').value, 'New Section')
+
+  await editSectionText(app, 'Section title', '  Intake  ')
+  await editSectionText(app, 'Section title', '   ')
+  assert.equal(app.field('Section title').value, 'Intake')
+  await editSectionText(app, 'Section description', '  Route orders\nCapture context  ')
+  const select = app.field('Color')
+  select.value = 'green'
+  select.dispatchEvent(new select.ownerDocument.defaultView.Event('change', { bubbles: true }))
+  await tick()
+  assert.equal(section.querySelector('button').textContent, 'Intake')
+  assert.equal(section.querySelector('.section-description').textContent, 'Route orders\nCapture context')
+  assert.equal(section.style.getPropertyValue('--section-accent'), '#a3b88d')
+  await app.click('Close inspector')
+  assert.equal(section.querySelector('.section-resize'), null)
+  await selectStage(app)
+  assert.equal(app.field('Section title').value, 'Intake')
+  assert.ok(section.querySelector('.section-resize'))
+})
+
+test('moves and resizes only the section with one undo step, minimum bounds, and Escape cancellation', async (t) => {
+  const app = await launch(t)
+  const original = stage('section-1', 'Intake', 0, 40)
+  const fixture = { ...legacyWorkflow, sections: [original] }
+  await app.open('/workflow.json', fixture)
+  await app.click('Architect View')
+  const zoom = Number(app.query('.vue-flow__transformationpane').style.transform.match(/scale\(([^)]+)/)[1])
+  const pane = app.query('.vue-flow__pane')
+  const start = () => sectionElement(app).querySelector('button')
+  pointer(start(), 'pointerdown', 200, 200)
+  pointer(pane, 'pointermove', 200 + 40 * zoom, 200 + 20 * zoom)
+  await tick()
+  assert.ok(Math.abs(sectionGeometry(sectionElement(app))[0] - 40) < 0.01)
+  assert.equal(app.isDirty(), false)
+  assert.equal(app.key('k', quickAddKey, start()), true)
+  await app.click('Export Markdown')
+  assert.deepEqual(app.exports, [])
+  pointer(pane, 'pointerup', 200 + 80 * zoom, 200 + 60 * zoom)
+  await tick()
+  assert.equal(app.isDirty(), true)
+  assert.ok(Math.abs(sectionGeometry(sectionElement(app))[0] - 80) < 0.01)
+  await app.click('Undo')
+  assert.deepEqual(sectionGeometry(sectionElement(app)), [0, 40, 400, 240])
+  assert.equal(app.isDirty(), false)
+  await app.click('Redo')
+  const moved = sectionGeometry(sectionElement(app))
+  assert.ok(Math.abs(moved[0] - 80) < 0.01)
+  assert.ok(Math.abs(moved[1] - 100) < 0.01)
+
+  pointer(start(), 'pointerdown', 200, 200)
+  pointer(pane, 'pointermove', 500, 500)
+  await tick()
+  assert.notDeepEqual(sectionGeometry(sectionElement(app)), moved)
+  assert.equal(app.key('Escape', {}, start()), false)
+  pointer(pane, 'pointerup', 500, 500)
+  await tick()
+  assert.deepEqual(sectionGeometry(sectionElement(app)), moved)
+
+  pointer(sectionElement(app).querySelector('.section-resize'), 'pointerdown', 600, 410)
+  pointer(pane, 'pointermove', 0, 0)
+  await tick()
+  assert.deepEqual(sectionGeometry(sectionElement(app)), [moved[0], moved[1], 160, 100])
+  pointer(pane, 'pointerup', 0, 0)
+  await tick()
+  assert.deepEqual(sectionGeometry(sectionElement(app)), [moved[0], moved[1], 160, 100])
+  const saved = await app.save('/workflow.json')
+  assert.deepEqual(saved.nodes, fixture.nodes)
+  assert.deepEqual(saved.edges, fixture.edges)
+
+  await selectStage(app)
+  assert.equal(app.key('Delete', {}, start()), false)
+  await tick()
+  assert.equal(sectionElement(app), null)
+  const afterDelete = await app.save('/workflow.json')
+  assert.equal(Object.hasOwn(afterDelete, 'sections'), false)
+  assert.deepEqual(afterDelete.nodes, fixture.nodes)
+  assert.deepEqual(afterDelete.edges, fixture.edges)
+  await app.click('Undo')
+  assert.deepEqual(sectionGeometry(sectionElement(app)), [moved[0], moved[1], 160, 100])
+})
+
+test('derives inclusive membership from the Architect center, with the last section winning overlaps', async (t) => {
+  const app = await launch(t)
+  const fixture = structuredClone(legacyWorkflow)
+  const back = stage('back', 'Intake [stage]', 0, 0)
+  const front = stage('front', 'Review', 216, 136, 160, 100)
+  front.description = 'Review <order>\nThen decide'
+  fixture.sections = [back, front]
+  await app.open('/workflow.json', fixture)
+  await app.click('Architect View')
+  const before = await sectionReview(app)
+  assert.deepEqual(before.sections, [
+    { id: back.id, title: back.title, description: null, nodeIds: ['webhook'] },
+    { id: front.id, title: front.title, description: front.description, nodeIds: ['http'] },
+  ])
+  assert.match(app.clipboard.at(-1), /Visual sections are planning annotations/)
+  assert.equal(before.nodes.length, 2)
+  assert.equal(before.edges[0].source, 'webhook')
+  await app.click('Copy Review Prompt')
+  assert.equal(app.clipboard.at(-1), app.clipboard.at(-2))
+  await app.click('Export Markdown')
+  const markdown = app.exports.at(-1).contents
+  assert.ok(markdown.includes('### Intake \\[stage\\]'))
+  assert.ok(markdown.includes('- webhook · Webhook'))
+  assert.ok(markdown.includes('- http · HTTP Request'))
+  assert.ok(markdown.includes('Review \\<order\\>  \nThen decide'))
+  assert.equal(app.isDirty(), false)
+
+  const grip = sectionElement(app, 'front').querySelector('button')
+  const pane = app.query('.vue-flow__pane')
+  pointer(grip, 'pointerdown', 400, 300)
+  pointer(pane, 'pointerup', 800, 300)
+  await tick()
+  assert.deepEqual((await sectionReview(app)).sections.map(({ nodeIds }) => nodeIds), [['webhook', 'http'], []])
+  await selectStage(app, 'back')
+  pointer(sectionElement(app, 'back').querySelector('.section-resize'), 'pointerdown', 600, 410)
+  pointer(pane, 'pointerup', 0, 0)
+  await tick()
+  assert.deepEqual((await sectionReview(app)).sections.map(({ nodeIds }) => nodeIds), [[], []])
+  await app.click('Undo')
+  await app.click('Undo')
+  assert.deepEqual((await sectionReview(app)).sections, before.sections)
+
+  await app.drag(app.node('http'), pane, { clientX: 960, clientY: 440 }, { clientX: 500, clientY: 300 })
+  const after = await sectionReview(app)
+  assert.deepEqual(after.sections.map(({ nodeIds }) => nodeIds), [['webhook'], []])
+  assert.deepEqual(after.edges, before.edges)
+  assert.deepEqual(after.nodes, before.nodes)
+  await app.click('Undo')
+  assert.deepEqual((await sectionReview(app)).sections, before.sections)
+  await app.open('/swapped.json', { ...fixture, sections: [front, back] })
+  assert.deepEqual((await sectionReview(app)).sections.map(({ nodeIds }) => nodeIds), [[], ['webhook', 'http']])
+})
+
+test('validates optional section data and round-trips version 1 workflows through save, reopen and recovery', async (t) => {
+  const recoveries = new Map()
+  const app = await launch(t, recoveries)
+  await app.open('/legacy.json', legacyWorkflow)
+  assert.deepEqual(await app.save('/legacy.json'), legacyWorkflow)
+  const fixture = structuredClone(legacyWorkflow)
+  fixture.sections = [stage('section-1', 'Intake', -240, -100)]
+  await app.open('/sections.json', fixture)
+  for (const sections of [
+    null, [{ ...fixture.sections[0], id: 'http' }], [{ ...fixture.sections[0], width: 159 }],
+    [{ ...fixture.sections[0], title: 'bad\nname' }], [{ ...fixture.sections[0], color: 'bright-pink' }],
+    [{ ...fixture.sections[0], position: { x: 10_000_001, y: 0 } }],
+  ]) {
+    await app.open('/invalid.json', { ...fixture, sections })
+    assert.match(app.query('.workspace-notice').textContent, /section|duplicate IDs/i)
+    assert.equal(app.query('.file-status').title, '/sections.json')
+    assert.equal(app.isDirty(), false)
+  }
+
+  await app.click('Architect View')
+  await app.click('Add Section')
+  assert.ok(sectionElement(app, 'section-2'))
+  await editSectionText(app, 'Section title', 'Processing')
+  await app.click('Undo')
+  assert.equal(sectionElement(app, 'section-2').querySelector('button').textContent, 'New Section')
+  await app.click('Redo')
+  assert.equal(sectionElement(app, 'section-2').querySelector('button').textContent, 'Processing')
+  await selectStage(app, 'section-2')
+  app.type('Section description', 'Recovery records the focused draft')
+  await app.close()
+  const recovered = await launch(t, recoveries)
+  await recovered.click('Restore as unsaved')
+  assert.equal(recovered.isDirty(), true)
+  const saved = await recovered.save('/restored.json')
+  assert.equal(saved.schemaVersion, 1)
+  assert.deepEqual(saved.nodes, fixture.nodes)
+  assert.deepEqual(saved.edges, fixture.edges)
+  assert.deepEqual(saved.sections[0], fixture.sections[0])
+  assert.equal(saved.sections[1].description, 'Recovery records the focused draft')
+  assert.equal(recovered.isDirty(), false)
+
+  await recovered.click('New Project')
+  await recovered.open('/restored.json')
+  await recovered.click('Architect View')
+  await selectStage(recovered, 'section-2')
+  assert.equal(recovered.field('Section title').value, 'Processing')
+  assert.equal(recovered.field('Section description').value, 'Recovery records the focused draft')
+  assert.deepEqual(await recovered.save('/copy.json', 'Save As…'), saved)
+})
+
+test('renders complete section bounds behind nodes and edges in PNG, including sections-only workflows', async (t) => {
+  const app = await launch(t)
+  const far = stage('far', 'Offscreen annotation', -1000, -600, 300, 160)
+  far.description = 'A separate stage'
+  await app.open('/sections.json', { ...legacyWorkflow, sections: [far] })
+  await app.click('Export PNG')
+  const first = app.raster()
+  assert.equal(first.scene.getAttribute('viewBox'), '-1040 -640 1400 868')
+  assert.equal(first.width, 2800)
+  const group = first.scene.querySelector('.visual-section')
+  assert.equal(group.getAttribute('transform'), 'translate(-1000 -600)')
+  assert.equal(group.querySelector('rect').getAttribute('width'), '299')
+  assert.equal(group.nextElementSibling.getAttribute('marker-end'), 'url(#arrow)')
+  assert.match(group.textContent, /Offscreen annotationA separate stage/)
+  assert.match(first.scene.querySelector('path[marker-end]').getAttribute('d'), /C/)
+  assert.equal(app.isDirty(), false)
+  assert.equal(app.button('Undo').disabled, true)
+
+  await app.open('/annotation-only.json', { ...legacyWorkflow, nodes: [], edges: [], sections: [far] })
+  const transform = app.query('.vue-flow__transformationpane').style.transform
+  assert.doesNotMatch(transform, /^translate\(0px,0px\) scale\(1\)$/)
+  await app.click('Export PNG')
+  const { scene, width, height } = app.raster()
+  assert.deepEqual([width, height], [760, 480])
+  assert.equal(scene.getAttribute('viewBox'), '-1040 -640 380 240')
+  assert.equal(scene.querySelectorAll('g.visual-section').length, 1)
+  assert.doesNotMatch(scene.textContent, /No nodes/)
+  await app.click('Export Markdown')
+  assert.match(app.exports.at(-1).contents, /No associated nodes/)
+})
+
+test('keeps sections read-only in Client View and Presentation Mode and preserves Ctrl+K in Architect View', async (t) => {
+  const app = await launch(t)
+  await app.open('/workflow.json', { ...legacyWorkflow, sections: [stage('section-1', 'Intake', 0, 0)] })
+  await app.click('Architect View')
+  await selectStage(app)
+  assert.ok(app.query('.section-resize'))
+  assert.equal(app.key('k', quickAddKey, sectionElement(app).querySelector('button')), false)
+  await tick()
+  await searchNodes(app, 'error')
+  app.key('Enter', {}, nodeSearch(app))
+  await tick()
+  assert.match(app.query('.vue-flow__node.selected').textContent, /Error Handler/)
+  assert.equal(app.query('.section-resize'), null)
+  await app.click('Undo')
+  assert.equal(app.isDirty(), false)
+  const original = sectionGeometry(sectionElement(app))
+  await app.click('Client View')
+  for (const view of ['client', 'presentation']) {
+    if (view === 'presentation') await app.click('Present')
+    assert.equal(sectionElement(app).querySelector('.section-title').textContent, 'Intake')
+    assert.deepEqual(sectionGeometry(sectionElement(app)), original)
+    assert.equal(app.query('.section-grip, .section-resize, .graph-inspector'), null)
+    assert.equal(app.button('Add Section'), undefined)
+    assert.ok(app.query('.client-node-card'))
+    assert.equal(app.key('Delete'), true)
+    assert.equal(app.key('k', quickAddKey), true)
+    const transform = app.query('.vue-flow__transformationpane')
+    const beforePan = transform.style.transform
+    const pane = app.query('.vue-flow__pane')
+    await app.drag(pane, pane, { clientX: 880, clientY: 400 })
+    assert.notEqual(transform.style.transform, beforePan)
+  }
+  await app.click('Exit Presentation')
+  await app.click('Back to Architect View')
+  assert.deepEqual(sectionGeometry(sectionElement(app)), original)
+  assert.equal(app.isDirty(), false)
+  assert.ok(app.button('Add Section'))
 })

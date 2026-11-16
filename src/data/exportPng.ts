@@ -3,6 +3,7 @@ import { getBezierPath, Position } from '@vue-flow/core'
 import { clientCard, defaultNodeColors, nodeCatalog, nodeColors, nodeIcons, outputPortFraction, workflowHandleSize } from './nodeCatalog'
 import { errorEdgeStyle } from './sampleWorkflow'
 import type { WorkflowDocument } from './workflowDocument'
+import type { VisualSection } from './visualSections'
 
 const padding = 40
 const background = '#201f1c'
@@ -63,8 +64,23 @@ function clientNode(context: CanvasRenderingContext2D, node: WorkflowDocument['n
   ])
 }
 
+function sectionAnnotation(context: CanvasRenderingContext2D, section: VisualSection) {
+  const { position: { x, y }, width, height } = section
+  const { accent, border } = nodeColors[section.color]
+  const title = wrapText(context, section.title, width - 32, 15, 650)
+  const description = section.description ? wrapText(context, section.description, width - 32, 12, 400) : []
+  const lines = (content: string[], baseline: number, step: number) =>
+    content.map((line, index) => h('tspan', { x: 16, y: baseline + index * step }, line))
+  return h('g', { class: 'visual-section', transform: `translate(${x} ${y})` }, [
+    h('rect', { x: 0.5, y: 0.5, width: width - 1, height: height - 1, rx: 8, fill: accent, 'fill-opacity': 0.08, stroke: border }),
+    h('text', { fill: '#f0e9dd', 'font-size': 15, 'font-weight': 650 }, lines(title, 25, 18)),
+    ...(description.length
+      ? [h('text', { fill: '#c3bbae', 'font-size': 12 }, lines(description, 25 + title.length * 18, 15))] : []),
+  ])
+}
+
 export async function exportPng(workflow: WorkflowDocument): Promise<string> {
-  const { nodes, edges } = workflow
+  const { nodes, edges, sections = [] } = workflow
   const canvas = document.createElement('canvas')
   const context = canvas.getContext('2d')
   if (!context) throw new Error('PNG rendering is unavailable.')
@@ -81,6 +97,10 @@ export async function exportPng(workflow: WorkflowDocument): Promise<string> {
   for (const { position: { x, y } } of nodes) {
     include(x, y)
     include(x + clientCard.width, y + clientCard.height)
+  }
+  for (const { position: { x, y }, width, height } of sections) {
+    include(x, y)
+    include(x + width, y + height)
   }
 
   const paths = edges.map((edge) => {
@@ -109,7 +129,8 @@ export async function exportPng(workflow: WorkflowDocument): Promise<string> {
     })
   })
 
-  if (!nodes.length) {
+  const empty = !nodes.length && !sections.length
+  if (empty) {
     include(0, 0)
     include(240, 80)
   }
@@ -134,9 +155,10 @@ export async function exportPng(workflow: WorkflowDocument): Promise<string> {
         }),
       ]),
     ]),
+    ...sections.map((section) => sectionAnnotation(context, section)),
     ...paths,
     ...nodes.map((node) => clientNode(context, node)),
-    ...(!nodes.length ? [h('text', { x: 120, y: 45, fill: '#c3bbae', 'text-anchor': 'middle', 'font-size': 14 }, 'No nodes in this workflow')] : []),
+    ...(empty ? [h('text', { x: 120, y: 45, fill: '#c3bbae', 'text-anchor': 'middle', 'font-size': 14 }, 'No nodes in this workflow')] : []),
   ])
 
   const container = document.createElement('div')

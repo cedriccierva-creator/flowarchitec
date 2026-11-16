@@ -2,6 +2,8 @@ import type { Edge } from '@vue-flow/core'
 import { createWorkflowNode } from './nodeCatalog'
 import type { WorkflowNode } from './nodeCatalog'
 
+export const errorEdgeStyle = { stroke: '#ba8277', strokeDasharray: '5 5' }
+
 // Factories keep the demo reset independent of Vue Flow's reactive mutations.
 export function createSampleNodes(): WorkflowNode[] {
   return [
@@ -20,7 +22,7 @@ export function createSampleEdges(): Edge[] {
     { id: 'router-agent', source: 'router', sourceHandle: 'success', target: 'agent', targetHandle: 'in' },
     {
       id: 'router-error', source: 'router', sourceHandle: 'error', target: 'error', targetHandle: 'in',
-      style: { stroke: '#ba8277', strokeDasharray: '5 5' },
+      style: { ...errorEdgeStyle },
     },
   ]
 }

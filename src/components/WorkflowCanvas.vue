@@ -1,27 +1,29 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef } from 'vue'
 import { ConnectionLineType, ConnectionMode, MarkerType, Panel, VueFlow, useVueFlow } from '@vue-flow/core'
 import type { Connection, DefaultEdgeOptions, MouseTouchEvent, XYPosition } from '@vue-flow/core'
-import { Maximize, Minus, MousePointer2, Plus, RotateCcw } from 'lucide-vue-next'
+import { Maximize, Minus, MousePointer2, Plus, Redo2, Undo2 } from 'lucide-vue-next'
 import GraphInspector from './GraphInspector.vue'
 import NodePicker from './NodePicker.vue'
 import WorkflowNode from './WorkflowNode.vue'
 import { createWorkflowNode } from '../data/nodeCatalog'
 import type { NodeKind, WorkflowNodeData } from '../data/nodeCatalog'
-import { createSampleEdges, createSampleNodes } from '../data/sampleWorkflow'
+import { isDesktop } from '../data/desktop'
+import { captureWorkflow, materializeEdge, materializeNode, untitled } from '../data/workflowDocument'
+import type { WorkflowDocument } from '../data/workflowDocument'
+import { useWorkflowSession } from '../composables/useWorkflowSession'
 import { canConnect, findNodePosition } from '../data/workflowGraph'
 
-const sampleNodes = createSampleNodes()
-const sampleEdges = createSampleEdges()
 const {
   addEdges, addNodes, addSelectedNodes, connectionClickStartHandle, dimensions, edges, endConnection,
   findNode, fitView, getNodesInitialized, getSelectedEdges, getSelectedNodes, nodes, onClickConnectStart,
   onConnect, onConnectEnd, onConnectStart, onEdgeUpdate,
   onEdgeUpdateEnd, onEdgeUpdateStart, onNodeDragStart, onNodeDragStop, onNodesInitialized,
-  removeEdges, removeNodes, removeSelectedElements, setEdges, setNodes, updateEdge, updateNode,
-  updateNodeData, viewport, vueFlowRef, zoomIn, zoomOut,
+  removeEdges, removeNodes, removeSelectedElements, setEdges, setNodes, setViewport, updateEdge, updateNode,
+  updateNodeData, updateNodeInternals, viewport, vueFlowRef, zoomIn, zoomOut,
 } = useVueFlow()
 
+const projectName = ref(untitled)
 const pickerOpen = ref(false)
 const addButton = ref<HTMLButtonElement>()
 const selectedNode = computed(() => getSelectedNodes.value.length === 1 && !getSelectedEdges.value.length
@@ -43,11 +45,28 @@ const defaultEdgeOptions: DefaultEdgeOptions = {
 
 let nextNodeId = 1
 let nextEdgeId = 1
-let fitOnInitialize = true
+let fitOnInitialize = false
 let reconnectingEdgeId: string | undefined
 let activeConnection: MouseTouchEvent | undefined
 let connectionCancelled = false
-let activeNodeDrag: { event: MouseTouchEvent; positions: { id: string; position: XYPosition }[] } | undefined
+const activeNodeDrag = shallowRef<{ event: MouseTouchEvent; positions: { id: string; position: XYPosition }[] }>()
+
+const {
+  busy, notice, recoveryError, recoveries, showRecovery, dirty, filePath, fileName, canUndo, canRedo,
+  recordEdit, undo, redo, newProject, openProject, saveProject, restore, discardRecovery,
+} = useWorkflowSession(
+  () => captureWorkflow(projectName.value, nodes.value, edges.value),
+  applyDocument,
+  () => Boolean(activeNodeDrag.value),
+)
+
+function nextId(type: 'node' | 'edge') {
+  let id: string
+  do {
+    id = type === 'node' ? `node-${nextNodeId++}` : `edge-${nextEdgeId++}`
+  } while (findNode(id) || edges.value.some((edge) => edge.id === id))
+  return id
+}
 
 function validConnection(connection: Connection) {
   // Vue Flow also validates stored edges when parsing graph updates.
@@ -63,7 +82,7 @@ onConnectStart(({ event }) => {
 onConnectEnd(() => { activeConnection = undefined })
 onClickConnectStart(() => { connectionCancelled = false })
 onConnect((connection) => {
-  if (validConnection(connection)) addEdges({ ...connection, id: `edge-${nextEdgeId++}` })
+  if (validConnection(connection)) addEdges({ ...connection, id: nextId('edge') })
 })
 onEdgeUpdateStart(({ edge }) => { reconnectingEdgeId = edge.id })
 onEdgeUpdate(({ edge, connection }) => {
@@ -71,9 +90,14 @@ onEdgeUpdate(({ edge, connection }) => {
 })
 onEdgeUpdateEnd(() => { reconnectingEdgeId = undefined })
 onNodeDragStart(({ event, nodes }) => {
-  activeNodeDrag = { event, positions: nodes.map(({ id, position }) => ({ id, position: { ...position } })) }
+  recordEdit()
+  activeNodeDrag.value = { event, positions: nodes.map(({ id, position }) => ({ id, position: { ...position } })) }
 })
-onNodeDragStop(() => { activeNodeDrag = undefined })
+onNodeDragStop(() => {
+  if (!activeNodeDrag.value) return
+  activeNodeDrag.value = undefined
+  recordEdit()
+})
 function fitInitializedGraph() {
   if (!fitOnInitialize || !nodes.value.length || getNodesInitialized.value.length !== nodes.value.length) return
   fitOnInitialize = false
@@ -89,7 +113,7 @@ function closePicker(restoreFocus = true) {
 
 async function addNode(kind: NodeKind, copy?: WorkflowNodeData, preferred?: XYPosition) {
   const position = findNodePosition(viewport.value, dimensions.value, nodes.value, preferred)
-  const node = createWorkflowNode(kind, `node-${nextNodeId++}`, position)
+  const node = createWorkflowNode(kind, nextId('node'), position)
   if (copy) {
     node.data = { ...copy, label: `${copy.label.slice(0, 75)} copy`, outputs: copy.outputs.map((port) => ({ ...port })) }
   }
@@ -140,8 +164,9 @@ function onEscape(event: KeyboardEvent) {
     endConnection()
   } else if (connectionClickStartHandle.value) {
     endConnection(undefined, true)
-  } else if (activeNodeDrag) {
-    const { event: dragEvent, positions } = activeNodeDrag
+  } else if (activeNodeDrag.value) {
+    const { event: dragEvent, positions } = activeNodeDrag.value
+    activeNodeDrag.value = undefined
     releaseGesture(dragEvent)
     for (const { id, position } of positions) updateNode(id, { position })
   } else if (pickerOpen.value) {
@@ -160,19 +185,53 @@ function onEscape(event: KeyboardEvent) {
   event.stopPropagation()
 }
 
-onMounted(() => document.addEventListener('keydown', onEscape, true))
-onUnmounted(() => document.removeEventListener('keydown', onEscape, true))
+function onShortcut(event: KeyboardEvent) {
+  if (event.key === 'Escape') {
+    onEscape(event)
+    return
+  }
+  if (event.isComposing || busy.value || activeNodeDrag.value || activeConnection || reconnectingEdgeId
+    || (event.target instanceof HTMLElement
+      && (event.target.isContentEditable || event.target.closest('input, textarea, select')))) return
 
-async function resetDemo() {
+  const key = event.key.toLowerCase()
+  if (event.ctrlKey && !event.altKey && !event.metaKey && (key === 'z' || key === 'y')) {
+    event.preventDefault()
+    if (key === 'y' || event.shiftKey) redo()
+    else undo()
+  } else if (!event.ctrlKey && !event.altKey && !event.metaKey && (key === 'delete' || key === 'backspace')) {
+    if (!getSelectedNodes.value.length && !getSelectedEdges.value.length) return
+    event.preventDefault()
+    removeEdges(getSelectedEdges.value)
+    removeNodes(getSelectedNodes.value)
+  }
+}
+
+onMounted(() => document.addEventListener('keydown', onShortcut, true))
+onUnmounted(() => document.removeEventListener('keydown', onShortcut, true))
+
+function renameProject(event: Event) {
+  const field = event.target as HTMLInputElement
+  projectName.value = field.value.trim() || untitled
+  field.value = projectName.value
+}
+
+function applyDocument(document: WorkflowDocument, fit = false) {
   closePicker(false)
   endConnection(undefined, true)
   removeSelectedElements()
-  fitOnInitialize = true
+  projectName.value = document.metadata.name
+  fitOnInitialize = fit && document.nodes.length > 0
   setEdges([])
-  setNodes(createSampleNodes())
-  setEdges(createSampleEdges())
-  await nextTick()
-  fitInitializedGraph()
+  setNodes(document.nodes.map(materializeNode))
+  setEdges(document.edges.map(materializeEdge))
+  if (fit && !document.nodes.length) void setViewport({ x: 0, y: 0, zoom: 1 })
+  if (fitOnInitialize) {
+    void nextTick(() => {
+      updateNodeInternals()
+      fitInitializedGraph()
+    })
+  }
 }
 </script>
 
@@ -180,31 +239,61 @@ async function resetDemo() {
   <section class="workspace" aria-label="Workflow planning canvas">
     <div class="workspace-heading">
       <div>
-        <p class="eyebrow">SAMPLE WORKFLOW</p>
-        <h1>From event to action<span class="title-dot">.</span></h1>
-        <p class="workspace-description">A little space to think through your automation.</p>
+        <p class="eyebrow">WORKFLOW</p>
+        <h1>
+          <input
+            class="project-name" aria-label="Project name" maxlength="100" :value="projectName" :disabled="busy"
+            @change="renameProject" @keydown.enter="($event.target as HTMLInputElement).blur()"
+          />
+        </h1>
       </div>
       <div class="workspace-actions">
+        <div class="project-actions" role="group" aria-label="Project file">
+          <button class="reset-button" type="button" :disabled="busy" @click="newProject()">New Project</button>
+          <button class="reset-button" type="button" :disabled="busy || !isDesktop" @click="openProject()">Open…</button>
+          <button class="reset-button" type="button" :disabled="busy || !isDesktop" @click="saveProject()">Save</button>
+          <button class="reset-button" type="button" :disabled="busy || !isDesktop" @click="saveProject(true)">Save As…</button>
+        </div>
+        <div class="history-actions" role="group" aria-label="Edit history">
+          <button class="reset-button" type="button" :disabled="busy || !canUndo" title="Undo (Ctrl+Z)" aria-label="Undo" @click="undo">
+            <Undo2 :size="15" aria-hidden="true" />
+          </button>
+          <button class="reset-button" type="button" :disabled="busy || !canRedo" title="Redo (Ctrl+Shift+Z or Ctrl+Y)" aria-label="Redo" @click="redo">
+            <Redo2 :size="15" aria-hidden="true" />
+          </button>
+        </div>
         <div class="node-picker-anchor">
           <button
             ref="addButton" class="reset-button add-node-button" type="button"
-            aria-haspopup="dialog" :aria-expanded="pickerOpen" :aria-controls="pickerOpen ? 'node-picker' : undefined"
+            :disabled="busy" aria-haspopup="dialog" :aria-expanded="pickerOpen" :aria-controls="pickerOpen ? 'node-picker' : undefined"
             @click="pickerOpen = !pickerOpen"
           >
             <Plus :size="15" aria-hidden="true" />Add Node
           </button>
-          <NodePicker v-if="pickerOpen" @add="addNode" @close="closePicker()" />
+          <NodePicker v-if="pickerOpen && !busy" @add="addNode" @close="closePicker()" />
         </div>
-        <button class="reset-button" type="button" @click="resetDemo">
-          <RotateCcw :size="14" aria-hidden="true" />Reset demo
-        </button>
+        <button class="reset-button" type="button" :disabled="busy" @click="newProject(true)">Load demo</button>
       </div>
     </div>
 
-    <div class="canvas-frame">
+    <div v-if="recoveries.length" class="recovery-panel">
+      <button class="reset-button" type="button" :aria-expanded="showRecovery" @click="showRecovery = !showRecovery">
+        Recovery snapshots ({{ recoveries.length }})
+      </button>
+      <ul v-if="showRecovery">
+        <li v-for="entry in recoveries" :key="entry.id">
+          <span v-if="entry.document">{{ entry.document.metadata.name }} · {{ entry.document.nodes.length }} nodes</span>
+          <span v-else>Unreadable snapshot</span>
+          <button v-if="entry.document" class="reset-button" type="button" :disabled="busy" @click="restore(entry)">Restore as unsaved</button>
+          <button class="reset-button" type="button" :disabled="busy" @click="discardRecovery(entry)">Discard snapshot</button>
+        </li>
+      </ul>
+    </div>
+
+    <p v-if="notice || recoveryError" class="workspace-notice" role="status">{{ notice }} {{ recoveryError }}</p>
+
+    <div class="canvas-frame" :inert="busy">
       <VueFlow
-        :nodes="sampleNodes"
-        :edges="sampleEdges"
         :default-edge-options="defaultEdgeOptions"
         :connection-mode="ConnectionMode.Strict"
         :connection-line-options="{ type: ConnectionLineType.Bezier }"
@@ -213,7 +302,7 @@ async function resetDemo() {
         edges-updatable
         :min-zoom="0.25"
         :max-zoom="2"
-        :delete-key-code="['Backspace', 'Delete']"
+        :delete-key-code="null"
         :zoom-on-double-click="false"
         @pane-click="closePicker(false)"
         @node-click="closePicker(false)"
@@ -260,7 +349,10 @@ async function resetDemo() {
 
     <footer class="workspace-footer">
       <span class="interaction-hint"><MousePointer2 :size="13" aria-hidden="true" />Drag nodes · Connect ports · Scroll to zoom · Drag canvas to pan</span>
-      <span>{{ nodes.length }} nodes<span class="footer-separator">/</span>{{ edges.length }} connections<span class="footer-separator">/</span>Session only</span>
+      <span class="file-status" :title="filePath">
+        {{ nodes.length }} nodes<span class="footer-separator">/</span>{{ edges.length }} connections<span class="footer-separator">/</span>
+        {{ fileName ?? (isDesktop ? 'No project file' : 'Browser preview') }}{{ dirty ? ' · Unsaved changes' : '' }}
+      </span>
     </footer>
   </section>
 </template>

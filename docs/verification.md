@@ -1,8 +1,38 @@
 # FlowArchitect verification
 
+## Phase 2B — Persistence and Undo/Redo
+
+Checked on 2026-11-16 from a clean worktree at `08fa172`.
+
+### Automated checks
+
+| Check | Result |
+| --- | --- |
+| `npm run doctor` | Passed. Node, Cargo, GTK, WebKitGTK, and other required development packages were detected. |
+| `npm run build` | Passed. Vue/TypeScript and the production bundle built successfully. |
+| `cargo test --manifest-path src-tauri/Cargo.toml --locked --offline` | 2 passed. Covered atomic replacement, file isolation, failed-write cleanup, the file-size limit, and recovery ID validation. |
+| `cargo build --manifest-path src-tauri/Cargo.toml --locked --offline --features tauri/custom-protocol` | Passed. Built the native executable with frontend assets. |
+| Production bundle, session smoke checks | 20 passed in a temporary jsdom harness with mocked Tauri IPC. Covered Save/Open/Save As, dialog cancellation responses, data round-trip, rejection of invalid files, per-project recovery, corrupt snapshots, normal-close flush, New Project, all requested edit operations, the 80-step history limit, and text shortcut handling. |
+| Production bundle, canvas regression checks | 10 passed with simulated input and mocked geometry. Covered node appearance, the picker and inspector, Bézier connections, drag and Escape, both reconnection endpoints, deletion and duplication, zoom, pan, and fit. |
+
+### Manual COSMIC/Wayland verification pending
+
+The development launch stopped at Vite's `listen EPERM` on `127.0.0.1:1420`. Running the executable with embedded assets also failed to initialize GTK. Direct connections to the host Wayland and X11 sockets returned `EPERM` in the command sandbox. Native dialogs, real desktop input, and the COSMIC launch require a check from a regular desktop terminal.
+
+```bash
+cd /home/cedric/projects/flowarchitect && npm run desktop:dev
+```
+
+1. Confirm the window opens to an empty graph. Click **Load demo** and confirm five nodes, four curved edges, and the existing node styling.
+2. Rename the project, move a node, change its name, icon, and color, and label an edge. Click **Save** and choose a JSON path. Open that file and compare the title, positions, styles, edges, and label. Use **Save As…** to write a second file. Cancel both the Open and Save As dialogs and confirm the canvas and current path stay the same.
+3. Edit project A and give recovery at least a second. Open project B, confirm the switch, then edit B without saving. Close and reopen FlowArchitect. Verify both recovery entries are offered. Click **Restore as unsaved** for A and confirm the edits return with no file path. Open the original saved A file separately to verify it still has the saved contents. An interrupted-session test can be done with a throwaway workflow by terminating the app after the autosave interval.
+4. Undo and redo node add, duplicate, delete, drag, rename, icon and color changes. Repeat for edge creation, deletion, labeling, and reconnection at both ends. One Ctrl+Z should undo a full drag. Test Ctrl+Shift+Z and Ctrl+Y. In a text field, use the same shortcuts and confirm they edit only the text.
+5. Attempt to open invalid JSON, a copied file with a repeated node ID, and a copied file with an edge pointing to a missing node. Confirm each error leaves the current workflow in place. Start **New Project** with unsaved changes, cancel once, then confirm and check that the graph, file path, and undo state reset.
+6. Confirm click-to-connect, Escape cancellation, normal Delete and Backspace in text fields, zoom, pan, fit, and window resizing on COSMIC.
+
 ## Phase 2A — Dynamic Graph Editing
 
-Checked on 2026-11-16. Git found no repository in the command environment, which exposes a read-only `.git` placeholder. The Phase 1 source and lockfiles were checkpointed as commit `36710f2` in the temporary repository `/tmp/flowarchitect-phase1-EKF3pz`.
+During the initial checks on 2026-11-16, Git found no repository in the command environment, which exposes a read-only `.git` placeholder. The Phase 1 source and lockfiles were checkpointed as commit `36710f2` in the temporary repository `/tmp/flowarchitect-phase1-EKF3pz`.
 
 | Check | Result |
 | --- | --- |
@@ -16,6 +46,8 @@ Checked on 2026-11-16. Git found no repository in the command environment, which
 The simulated DOM checks mounted the production bundle. They exercised the five-node sample and Bézier paths, picker search and node placement, rename/icon/color edits, input-safe Delete and Backspace, edge creation with a preview, duplicate and self-loop rejection, click-to-connect, edge tracking during a drag, reconnecting both endpoints, duplicate reconnect rejection, preserving edge IDs and labels, edge and node deletion, duplication, Escape cancellation, pan, zoom, fit, and reset. The harness captured no console warnings or errors.
 
 ### Phase 2A desktop smoke test
+
+The user later reported completing desktop verification on Pop!_OS 24.04 with COSMIC/Wayland.
 
 From a normal terminal on the Pop!_OS desktop:
 

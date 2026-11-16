@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main-window",
-  "description": "Phase 1 canvas needs no privileged frontend API access.",
+  "description": "Flush local recovery when closing the workspace.",
   "windows": ["main"],
-  "permissions": []
+  "permissions": ["core:event:allow-listen", "core:event:allow-unlisten", "core:window:allow-destroy"]
 }

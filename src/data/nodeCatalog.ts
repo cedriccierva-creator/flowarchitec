@@ -47,7 +47,7 @@ export interface WorkflowNodeData {
   color?: NodeColor
 }
 
-export type WorkflowNode = Node<WorkflowNodeData>
+export type WorkflowNode = Node<WorkflowNodeData> & { data: WorkflowNodeData }
 
 export function createWorkflowNode(kind: NodeKind, id: string, position: WorkflowNode['position']): WorkflowNode {
   const definition = nodeCatalog[kind]

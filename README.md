@@ -1,6 +1,6 @@
 # FlowArchitect
 
-A small Tauri 2 + Vue 3 desktop canvas for planning n8n and Make automations. Phase 2A adds dynamic graph editing to Canvas Lab. Edits last for the current session.
+A small Tauri 2 + Vue 3 desktop canvas for planning n8n and Make automations. Phase 2B adds local project files, recovery snapshots, and undo/redo to Canvas Lab.
 
 ## Run
 
@@ -57,30 +57,42 @@ Network access to npm and Rust crate sources is needed for a fresh build. The co
 - Drag an output port to an input port, or click the two ports in order. Router exposes separate Success and Error outputs. Webhook has only an output.
 - Select an edge to edit or clear its label. Drag either highlighted endpoint to a compatible port to reconnect it. Reconnecting keeps the edge’s label.
 - Press Delete or Backspace to remove the selection. Removing a node also removes its connections. Those keys edit text normally in a field. Escape cancels a connection gesture or node drag, discards uncommitted text, or closes the picker or inspector.
-- Scroll or pinch to zoom, drag empty canvas to pan, or use the view controls at bottom left. **Reset demo** restores the five original nodes and four edges.
+- Scroll or pinch to zoom, drag empty canvas to pan, or use the view controls at bottom left.
+
+## Project files, recovery, and history
+
+- The app starts with an empty workflow. Click the project title to rename it. **New Project** resets the graph and project name. **Load demo** starts a separate workflow with the original five nodes and four edges. Switching away from unsaved changes requires confirmation.
+- **Save** writes to the current file, or prompts for a location on the first save. **Save As…** chooses a destination, and **Open…** validates a local workflow before switching. The canvas footer shows the current filename and unsaved status. Hover over it for the full path.
+- Workflow JSON uses `schemaVersion: 1` and stores the project name, nodes, positions, icons, colors, connections, and labels. Files must be UTF-8 and at most 8 MiB. Saving writes a temporary file beside the destination and atomically renames it into place on Linux.
+- Unsaved edits are written after 500 ms of inactivity to snapshots under Tauri's application-data `recovery` folder. On Linux this is normally `~/.local/share/io.flowarchitect.desktop/recovery/`. Switching projects or closing the window flushes pending edits. Snapshots are offered at startup. **Restore as unsaved** loads a copy that needs an explicit file destination, and **Discard snapshot** permanently removes the selected snapshot after confirmation.
+- **Ctrl+Z** undoes an edit. **Ctrl+Shift+Z** and **Ctrl+Y** redo. The workspace keeps up to 80 undo steps in memory per open workflow. A drag counts as one step, and text fields keep their own editing shortcuts.
+
+Native file and recovery actions are available in the Linux Tauri app. The browser preview supports canvas editing and history.
 
 ## Structure and dependency purpose
 
 | File | Purpose |
 | --- | --- |
 | `src/App.vue` | Minimal application frame |
-| `src/components/WorkflowCanvas.vue` | Vue Flow graph state, editing actions, and viewport controls |
+| `src/components/WorkflowCanvas.vue` | Vue Flow state, project and recovery controls, and keyboard shortcuts |
+| `src/composables/useWorkflowSession.ts` | Active project, unsaved state, history, and recovery scheduling |
+| `src/data/workflowDocument.ts`, `src/data/desktop.ts` | Workflow schema, validation, and Tauri command bridge |
 | `src/components/WorkflowNode.vue` | Reusable icon tile, label, and handles |
 | `src/components/NodePicker.vue`, `src/components/GraphInspector.vue` | Searchable picker and contextual editing |
 | `src/data/nodeCatalog.ts`, `src/data/sampleWorkflow.ts`, `src/data/workflowGraph.ts` | Node definitions, demo graph, connection validation, and node placement |
 | `src/style.css` | Plain CSS, warm charcoal theme |
 | `public/` | Local SVG app mark and dot pattern |
-| `src-tauri/` | Tauri 2 Rust entry points, window configuration, local icon, empty privileged API capability |
+| `src-tauri/` | Tauri shell, GTK file dialogs, atomic file writes, and local recovery storage |
 | `scripts/check-prerequisites.mjs` | Read-only environment diagnostic |
 | `docs/verification.md` | Actual check results and desktop acceptance checklist |
 
-Runtime frontend dependencies: **Vue 3** for UI, **@vue-flow/core** for canvas behavior, **lucide-vue-next** for icons. Development dependencies: **Vite**, **@vitejs/plugin-vue**, **TypeScript**, **vue-tsc**, **@types/node**, and **@tauri-apps/cli**. Rust dependencies: **tauri** and **tauri-build**.
+Runtime frontend dependencies: **Vue 3** for UI, **@vue-flow/core** for canvas behavior, **lucide-vue-next** for icons. Development dependencies: **Vite**, **@vitejs/plugin-vue**, **TypeScript**, **vue-tsc**, **@types/node**, and **@tauri-apps/cli**. Rust dependencies include **tauri**, **tauri-build**, and a direct Linux reference to **gtk**, which Tauri already uses and had locked. No npm packages or Rust crate versions were added.
 
 The frontend structure is adapted from the official cached `create-vite` Vue/TypeScript template. TypeScript settings are kept inline to avoid an extra configuration package. The Tauri shell follows the documented manual/Vite integration; the `create-tauri-app` generator could not download, so it was not run. No n8n source code was copied.
 
 ## Verification
 
-The [verification notes](docs/verification.md) record the Phase 2A build, simulated DOM checks, and the remaining COSMIC desktop smoke test.
+The [verification notes](docs/verification.md) record the Phase 2B automated results and the remaining COSMIC/Wayland desktop checks.
 
 ## Official references
 

@@ -4,7 +4,9 @@ import { Copy, Trash2, X } from 'lucide-vue-next'
 import DocumentationField from './DocumentationField.vue'
 import { nodeColors, nodeIcons } from '../data/nodeCatalog'
 import type { NodeColor, NodeIcon, WorkflowNodeData } from '../data/nodeCatalog'
-import { nodeDocumentationFields, overviewFields } from '../data/workflowDocument'
+import {
+  businessDescriptionLimit, clientLabelLimit, nodeDocumentationFields, overviewFields, readBusinessDescription, readClientLabel,
+} from '../data/workflowDocument'
 import type { NodeDocumentation, NodeDocumentationField, OverviewField, ProjectOverview } from '../data/workflowDocument'
 
 const props = defineProps<{
@@ -116,6 +118,17 @@ function commitInput(event: KeyboardEvent) {
           v-for="field in nodeDocumentationFields" :key="field"
           v-bind="nodeFields[field]" :value="nodeDocumentation?.[field]"
           @commit="emit('updateNodeDocumentation', field, $event)"
+        />
+        <h3 class="editor-section-title">Client View</h3>
+        <DocumentationField
+          label="Client label" placeholder="Uses the node name when empty" :value="node.data.clientLabel"
+          single-line :limit="clientLabelLimit" :normalize="readClientLabel"
+          @commit="emit('updateNode', { clientLabel: $event })"
+        />
+        <DocumentationField
+          label="Business description" placeholder="What happens in this step?" :value="node.data.businessDescription"
+          :limit="businessDescriptionLimit" :normalize="readBusinessDescription"
+          @commit="emit('updateNode', { businessDescription: $event })"
         />
       </template>
       <DocumentationField

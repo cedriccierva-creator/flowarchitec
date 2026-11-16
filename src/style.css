@@ -153,6 +153,38 @@ button:disabled { opacity: .42; cursor: default; }
 .recovery-panel li { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
 .recovery-panel li span { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .recovery-panel li button { padding: 5px 7px; }
+.client-project-name { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.is-client-view :is(.vue-flow__node-workflow, .workflow-node) { width: 140px; height: 88px; }
+.is-client-view .vue-flow__handle { visibility: hidden; pointer-events: none; }
+.is-client-view .vue-flow__edge { pointer-events: none; }
+.is-client-view .vue-flow__edge-textwrapper { display: none; }
+.client-node-card {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 5px;
+  height: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--node-border);
+  border-radius: 12px;
+  background: #292722;
+}
+.client-node-heading { display: flex; align-items: center; gap: 7px; }
+.client-node-heading svg { flex-shrink: 0; color: var(--node-accent); }
+.client-node-label, .client-node-description {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.client-node-label { color: #f0e9dd; font-size: 13px; line-height: 1.2; font-weight: 650; }
+.client-node-description { margin: 0; color: #c3bbae; font-size: 11px; line-height: 1.2; }
+.workspace.is-presenting { padding: 0; }
+.workspace.is-presenting .canvas-frame { border: 0; border-radius: 0; }
+.vue-flow__panel.presentation-controls { margin: 18px; }
+.presentation-controls .reset-button { background: #27251f; }
+.presentation-controls .reset-button:hover { background: #34312c; }
 @media (max-width: 900px) {
   .workspace-heading { align-items: flex-start; flex-direction: column; gap: 12px; }
   .workspace-heading > div:first-child { width: 100%; }

@@ -40,6 +40,8 @@ export type NodeColor = keyof typeof nodeColors
 export interface WorkflowNodeData {
   kind: NodeKind
   label: string
+  clientLabel?: string
+  businessDescription?: string
   caption: string
   input: boolean
   outputs: { id: string; label: string }[]

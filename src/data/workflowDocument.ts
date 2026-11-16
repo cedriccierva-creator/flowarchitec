@@ -7,6 +7,8 @@ import { canConnect } from './workflowGraph'
 export const overviewFields = ['summary', 'goals', 'assumptions', 'constraints'] as const
 export const nodeDocumentationFields = ['purpose', 'inputs', 'outputs', 'configuration', 'errorHandling'] as const
 export const documentationLimit = 8_000
+export const clientLabelLimit = 80
+export const businessDescriptionLimit = 240
 
 export type OverviewField = typeof overviewFields[number]
 export type NodeDocumentationField = typeof nodeDocumentationFields[number]
@@ -23,6 +25,8 @@ interface DocumentNode {
   kind: NodeKind
   position: { x: number; y: number }
   label: string
+  clientLabel?: string
+  businessDescription?: string
   icon?: NodeIcon
   color?: NodeColor
   documentation?: NodeDocumentation
@@ -61,6 +65,7 @@ export function captureWorkflow(
     nodes: nodes.map(({ id, position, data }) => ({
       id, kind: data.kind, position: { x: position.x, y: position.y }, label: data.label,
       icon: data.icon, color: data.color,
+      clientLabel: data.clientLabel, businessDescription: data.businessDescription,
       documentation: readNotes(nodeDocumentation?.get(id), nodeDocumentationFields),
     })),
     edges: edges.map(({ id, source, sourceHandle, target, targetHandle, label, style }) => ({
@@ -78,7 +83,10 @@ export function demoWorkflow() {
 
 export function materializeNode(node: DocumentNode): WorkflowNode {
   const result = createWorkflowNode(node.kind, node.id, { ...node.position })
-  Object.assign(result.data, { label: node.label, icon: node.icon, color: node.color })
+  Object.assign(result.data, {
+    label: node.label, icon: node.icon, color: node.color,
+    clientLabel: node.clientLabel, businessDescription: node.businessDescription,
+  })
   return result
 }
 
@@ -103,6 +111,24 @@ export function readDocumentationText(value: unknown): string | undefined {
   const normalized = value.replace(/\r\n?/g, '\n')
   if (normalized.length > documentationLimit) throw new Error(`Documentation fields are limited to ${documentationLimit} characters.`)
   return normalized.trim() ? normalized : undefined
+}
+
+function readClientText(value: unknown, label: string, limit: number): string | undefined {
+  if (value === undefined) return undefined
+  if (typeof value !== 'string') throw new Error(`${label} must contain plain text.`)
+  const normalized = value.replace(/\r\n?/g, '\n')
+  if (normalized.length > limit) throw new Error(`${label} is limited to ${limit} characters.`)
+  return normalized.trim() || undefined
+}
+
+export function readClientLabel(value: unknown): string | undefined {
+  const label = readClientText(value, 'Client label', clientLabelLimit)
+  if (label?.includes('\n')) throw new Error('Client label must be a single line.')
+  return label
+}
+
+export function readBusinessDescription(value: unknown): string | undefined {
+  return readClientText(value, 'Business description', businessDescriptionLimit)
 }
 
 function readNotes<K extends string>(value: unknown, fields: readonly K[]): Partial<Record<K, string>> | undefined {
@@ -159,6 +185,7 @@ export function parseWorkflow(json: string): WorkflowDocument {
       label: boundedText(node.label, 80),
       icon: node.icon === undefined ? undefined : catalogKey(nodeIcons, node.icon),
       color: node.color === undefined ? undefined : catalogKey(nodeColors, node.color),
+      clientLabel: readClientLabel(node.clientLabel), businessDescription: readBusinessDescription(node.businessDescription),
       documentation: readNotes(node.documentation, nodeDocumentationFields),
     }
   })

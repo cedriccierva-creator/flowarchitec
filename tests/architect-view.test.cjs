@@ -7,6 +7,7 @@ const { JSDOM, VirtualConsole } = require('jsdom')
 const dist = resolve(__dirname, '../dist')
 const index = readFileSync(resolve(dist, 'index.html'), 'utf8')
 const bundle = readFileSync(resolve(dist, index.match(/src="\/([^"]+\.js)"/)[1]), 'utf8')
+const stylesheet = readFileSync(resolve(dist, index.match(/href="\/([^"]+\.css)"/)[1]), 'utf8')
 const tick = (ms = 0) => new Promise((done) => setTimeout(done, ms))
 
 const legacyWorkflow = {
@@ -30,10 +31,13 @@ function mockCanvas(window) {
     const node = this.closest('.vue-flow__node')
     if (!node) return rect(20, 130, 1080, 490)
     const [x, y] = node.style.transform.match(/[-.\d]+(?=px)/g)?.map(Number) ?? [0, 0]
+    const client = node.closest('.is-client-view')
+    const width = client ? 140 : 72
+    const height = client ? 88 : 72
     if (this.matches('.vue-flow__handle')) {
-      return rect(x + (this.classList.contains('source') ? 72 : -12), y + 30, 12, 12)
+      return rect(x + (this.classList.contains('source') ? width : -12), y + height / 2 - 6, 12, 12)
     }
-    return rect(x, y, 72, 72)
+    return rect(x, y, width, height)
   }
   for (const [key, axis] of [['Width', 'width'], ['Height', 'height']]) {
     for (const prefix of ['offset', 'client']) {
@@ -66,6 +70,9 @@ async function launch(t, recoveries = new Map()) {
     url: 'https://flowarchitect.invalid/', runScripts: 'outside-only', pretendToBeVisual: true, virtualConsole,
   })
   const { document } = window
+  const style = document.createElement('style')
+  style.textContent = stylesheet
+  document.head.append(style)
   t.after(() => {
     window.close()
     assert.deepEqual(errors, [])
@@ -132,14 +139,14 @@ async function launch(t, recoveries = new Map()) {
     mouse(element, 'click')
     await tick()
   }
-  async function drag(from, to) {
+  async function drag(from, to, options = {}) {
     pointerTarget = from
     mouse(from, 'pointerdown')
     mouse(from, 'mousedown')
     pointerTarget = to
-    mouse(to, 'mousemove')
+    mouse(to, 'mousemove', options)
     await tick()
-    mouse(to, 'mouseup')
+    mouse(to, 'mouseup', options)
     pointerTarget = undefined
     await tick()
   }
@@ -184,7 +191,7 @@ async function launch(t, recoveries = new Map()) {
 
   window.eval(bundle)
   await tick()
-  return { query, button, node, edge, handle, field, isDirty, click, drag, key, type, edit, save, open, close }
+  return { query, all, button, node, edge, handle, field, isDirty, click, drag, key, type, edit, save, open, close }
 }
 
 async function demo(t) {
@@ -421,6 +428,16 @@ test('preserves node appearance, Bézier connections, edge labels, and descripti
   assert.match(app.edge('router-agent').textContent, /Ready/)
   await app.click(app.edge('router-agent'))
   assert.equal(app.field('Technical description').value, 'Successful validation')
+  await app.drag(app.edge('router-agent').querySelector('.vue-flow__edgeupdater-source'), app.handle('router', 'error'))
+  assert.match(app.edge('router-agent').getAttribute('aria-label'), /from router to error/)
+  await app.drag(app.edge('router-agent').querySelector('.vue-flow__edgeupdater-source'), app.handle('webhook', 'out'))
+  assert.match(app.edge('router-agent').getAttribute('aria-label'), /from webhook to error/)
+  const { edges } = await app.save()
+  assert.equal(edges.length, 4)
+  assert.deepEqual(edges.find(({ id }) => id === 'router-agent'), {
+    id: 'router-agent', source: 'webhook', sourceHandle: 'out', target: 'error', targetHandle: 'in',
+    label: 'Ready', description: 'Successful validation',
+  })
 })
 
 test('rejects malformed documentation and normalizes line endings, empty notes, and unknown keys', async (t) => {
@@ -457,4 +474,255 @@ test('rejects malformed documentation and normalizes line endings, empty notes, 
   const saved = await app.save('/normalized.json')
   assert.deepEqual(saved.metadata.overview, { summary: 'Listen\nRoute\nConfirm' })
   assert.deepEqual(saved.nodes[0].documentation, { purpose: '<b>Text only</b>' })
+})
+
+test('switches the existing canvas to Client View and restores Architect View controls', async (t) => {
+  const app = await demo(t)
+  await app.click(app.node('http'))
+  const node = app.node('http')
+  const canvas = app.query('.vue-flow')
+  const edge = app.edge('webhook-http')
+  await app.click('Client View')
+  assert.equal(app.query('.vue-flow'), canvas)
+  assert.equal(app.node('http'), node)
+  assert.equal(app.edge('webhook-http'), edge)
+  assert.ok(app.query('.is-client-view'))
+  assert.equal(app.query('.graph-inspector'), null)
+  assert.equal(app.query('.project-name'), null)
+  assert.equal(app.button('Add Node'), undefined)
+  assert.equal(node.querySelector('.node-tile'), null)
+  assert.ok(node.querySelector('.client-node-card'))
+  await app.click('Back to Architect View')
+  assert.equal(app.query('.is-client-view'), null)
+  assert.equal(app.node('http'), node)
+  assert.ok(node.querySelector('.node-tile'))
+  assert.ok(app.button('Add Node'))
+  assert.equal(app.button('Architect View').getAttribute('aria-pressed'), 'true')
+  await app.click(node)
+  assert.ok(app.field('Purpose'))
+})
+
+test('shows client text independently of technical labels and documentation, with technical fallback', async (t) => {
+  const app = await demo(t)
+  await app.click(app.node('http'))
+  await app.edit('Client label', '  Retrieve Customer Details  ')
+  await app.edit('Business description', 'Checks customer information.\nUpdates the CRM automatically.')
+  await app.edit('Purpose', 'Fetch API resource')
+  assert.equal(app.field('Name').value, 'HTTP Request')
+  assert.doesNotMatch(app.node('http').textContent, /Retrieve Customer Details|Checks customer information/)
+  await app.click('Client View')
+  const card = app.node('http').querySelector('.client-node-card')
+  assert.equal(card.querySelector('.client-node-label').textContent, 'Retrieve Customer Details')
+  const description = card.querySelector('.client-node-description')
+  assert.equal(description.textContent.trim(), 'Checks customer information.\nUpdates the CRM automatically.')
+  assert.equal(description.title, description.textContent.trim())
+  assert.doesNotMatch(card.textContent, /Fetch API resource|HTTP Request|Fetch the details/)
+  assert.equal(app.node('webhook').querySelector('.client-node-label').textContent, 'Webhook Trigger')
+  assert.equal(app.node('webhook').querySelector('.client-node-description'), null)
+})
+
+test('locks pointer and keyboard graph edits in Client View and preserves node positions and Bézier connections', async (t) => {
+  const app = await demo(t)
+  await app.click(app.edge('router-agent'))
+  await app.edit('Label', 'Technical route label')
+  const before = await app.save()
+  const positions = app.all('.vue-flow__node').map((node) => [node.dataset.id, node.style.transform])
+  const edge = app.edge('router-agent')
+  const getStyle = edge.ownerDocument.defaultView.getComputedStyle
+  const architectPath = edge.querySelector('.vue-flow__edge-path').getAttribute('d')
+  await app.click('Client View')
+  const node = app.node('http')
+  assert.equal(node.classList.contains('draggable'), false)
+  assert.equal(node.hasAttribute('tabindex'), false)
+  assert.equal(edge.hasAttribute('tabindex'), false)
+  assert.equal(edge.querySelector('.vue-flow__edgeupdater'), null)
+  assert.equal(getStyle(app.handle('http', 'out')).visibility, 'hidden')
+  assert.equal(getStyle(edge.querySelector('.vue-flow__edge-textwrapper')).display, 'none')
+  const clientPath = edge.querySelector('.vue-flow__edge-path').getAttribute('d')
+  assert.notEqual(clientPath, architectPath)
+  assert.match(clientPath, /C/)
+  await app.click(node)
+  await app.click(edge)
+  await app.drag(node, app.query('.vue-flow__pane'))
+  await app.drag(app.handle('webhook', 'out'), app.handle('agent', 'in'))
+  await app.click(app.handle('webhook', 'out'))
+  await app.click(app.handle('agent', 'in'))
+  for (const key of ['Enter', ' ', 'ArrowRight', 'Delete', 'Backspace']) app.key(key, {}, node)
+  assert.equal(app.key('z', { ctrlKey: true }), true)
+  assert.equal(app.key('y', { ctrlKey: true }), true)
+  assert.equal(app.query('.vue-flow__node.selected, .vue-flow__edge.selected, .graph-inspector'), null)
+  assert.equal(app.isDirty(), false)
+  assert.deepEqual(app.all('.vue-flow__node').map((item) => [item.dataset.id, item.style.transform]), positions)
+  await app.click('Back to Architect View')
+  assert.equal(edge.querySelector('.vue-flow__edge-path').getAttribute('d'), architectPath)
+  assert.deepEqual(await app.save(), before)
+  await app.click(node)
+  await app.edit('Name', 'Still editable')
+  assert.equal(app.isDirty(), true)
+  assert.match(node.textContent, /Still editable/)
+})
+
+test('Presentation Mode keeps the canvas and viewport controls and exits by Escape or button', async (t) => {
+  const app = await demo(t)
+  const canvas = app.query('.vue-flow')
+  const viewport = app.query('.vue-flow__transformationpane')
+  const before = () => viewport.style.transform
+  await app.click('Client View')
+  const controls = app.query('.viewport-controls')
+  const initialTransform = before()
+  await app.click('Present')
+  assert.equal(app.query('.vue-flow'), canvas)
+  assert.equal(app.query('.viewport-controls'), controls)
+  assert.equal(before(), initialTransform)
+  assert.equal(app.query('.app-header, .workspace-heading, .workspace-footer, .graph-inspector'), null)
+  const exit = app.button('Exit Presentation')
+  assert.equal(exit.ownerDocument.activeElement, exit)
+  await app.click('Zoom in')
+  assert.notEqual(before(), initialTransform)
+  const zoomed = before()
+  const pane = app.query('.vue-flow__pane')
+  await app.drag(pane, pane, { clientX: 650, clientY: 440 })
+  assert.notEqual(before(), zoomed)
+  const panned = before()
+  await app.click('Fit workflow to view')
+  assert.notEqual(before(), panned)
+  const fitted = before()
+  assert.equal(app.key('Escape', { isComposing: true }, exit), true)
+  assert.equal(app.key('Escape', {}, exit), false)
+  await tick()
+  assert.equal(app.query('.is-presenting'), null)
+  assert.equal(before(), fitted)
+  assert.ok(app.query('.is-client-view .workspace-heading'))
+  assert.equal(exit.ownerDocument.activeElement, app.button('Present'))
+  await app.click('Present')
+  await app.click('Exit Presentation')
+  assert.equal(app.query('.is-presenting'), null)
+  assert.equal(app.isDirty(), false)
+  await app.click('Back to Architect View')
+  assert.equal(app.button('Undo').disabled, true)
+  assert.equal(app.button('Redo').disabled, true)
+})
+
+test('Save, Save As, and Open preserve client and technical metadata together; blank client text is omitted', async (t) => {
+  const app = await demo(t)
+  await app.click(app.node('http'))
+  await app.edit('Purpose', 'HTTP integration')
+  await app.edit('Client label', 'Retrieve Customer Details')
+  app.type('Business description', 'Checks customer information.')
+  const saved = await app.save('/client.json', 'Save', false)
+  const node = saved.nodes.find(({ id }) => id === 'http')
+  assert.equal(saved.schemaVersion, 1)
+  assert.equal(node.label, 'HTTP Request')
+  assert.equal(node.clientLabel, 'Retrieve Customer Details')
+  assert.equal(node.businessDescription, 'Checks customer information.')
+  assert.deepEqual(node.documentation, { purpose: 'HTTP integration' })
+  assert.deepEqual(await app.save('/client-copy.json', 'Save As…'), saved)
+  await app.click('New Project')
+  await app.open('/client-copy.json')
+  await app.click(app.node('http'))
+  assert.equal(app.field('Client label').value, node.clientLabel)
+  assert.equal(app.field('Business description').value, node.businessDescription)
+  assert.equal(app.field('Purpose').value, node.documentation.purpose)
+  assert.equal(app.isDirty(), false)
+  await app.edit('Client label', '  ')
+  await app.edit('Business description', '\n\t')
+  const cleared = (await app.save('/client-copy.json')).nodes.find(({ id }) => id === 'http')
+  assert.equal(Object.hasOwn(cleared, 'clientLabel'), false)
+  assert.equal(Object.hasOwn(cleared, 'businessDescription'), false)
+  assert.deepEqual(cleared.documentation, node.documentation)
+})
+
+test('duplicates client metadata and supports one undo step per committed field across view changes', async (t) => {
+  const app = await demo(t)
+  await app.click(app.node('http'))
+  app.type('Client label', 'Retrieve')
+  const label = app.type('Client label', 'Retrieve Customer Details')
+  for (const key of ['z', 'y']) assert.equal(app.key(key, { ctrlKey: true }, label), true)
+  assert.equal(app.isDirty(), false)
+  await app.click('Client View')
+  assert.equal(app.isDirty(), true)
+  await app.click('Back to Architect View')
+  await app.click(app.node('http'))
+  const draft = app.type('Client label', 'Discard draft')
+  assert.equal(app.key('Escape', {}, draft), false)
+  assert.equal(draft.value, 'Retrieve Customer Details')
+  await app.edit('Business description', 'Checks information.')
+  await app.click('Duplicate')
+  assert.equal(app.field('Client label').value, 'Retrieve Customer Details')
+  assert.equal(app.field('Business description').value, 'Checks information.')
+  await app.edit('Client label', 'Partner details')
+  await app.click(app.node('http'))
+  assert.equal(app.field('Client label').value, 'Retrieve Customer Details')
+  await app.click('Client View')
+  await app.click('Back to Architect View')
+  for (let step = 0; step < 3; step++) await app.click('Undo')
+  assert.equal(app.node('node-1'), null)
+  await app.click(app.node('http'))
+  assert.equal(app.field('Client label').value, 'Retrieve Customer Details')
+  assert.equal(app.field('Business description').value, '')
+  await app.click('Undo')
+  assert.equal(app.isDirty(), false)
+  assert.equal(app.button('Undo').disabled, true)
+  await app.click('Client View')
+  await app.click('Present')
+  await app.click('Exit Presentation')
+  await app.click('Back to Architect View')
+  await app.click('Redo')
+  await app.click('Redo')
+  await app.click(app.node('http'))
+  assert.equal(app.field('Client label').value, 'Retrieve Customer Details')
+  assert.equal(app.field('Business description').value, 'Checks information.')
+})
+
+test('recovers unsaved client metadata after the debounce and focused-field close flush', async (t) => {
+  const recoveries = new Map()
+  const first = await launch(t, recoveries)
+  await first.click('Load demo')
+  await first.click('Architect View')
+  await first.click(first.node('http'))
+  await first.edit('Client label', 'Retrieve Customer Details')
+  await tick(600)
+  const snapshot = JSON.parse([...recoveries.values()][0])
+  assert.equal(snapshot.nodes.find(({ id }) => id === 'http').clientLabel, 'Retrieve Customer Details')
+  first.type('Business description', 'Unsaved customer details')
+  await first.close()
+  const second = await launch(t, recoveries)
+  await second.click('Restore as unsaved')
+  assert.equal(second.isDirty(), true)
+  await second.click('Client View')
+  assert.equal(second.node('http').querySelector('.client-node-label').textContent, 'Retrieve Customer Details')
+  assert.equal(second.node('http').querySelector('.client-node-description').textContent.trim(), 'Unsaved customer details')
+})
+
+test('opens Phase 2B and Phase 3A files with client fallbacks and rejects invalid client text', async (t) => {
+  const app = await launch(t)
+  const phase3a = structuredClone(legacyWorkflow)
+  phase3a.nodes[0].documentation = { purpose: 'Documented trigger' }
+  for (const [path, file] of [['/phase2b.json', legacyWorkflow], ['/phase3a.json', phase3a]]) {
+    await app.open(path, file)
+    await app.click('Client View')
+    assert.equal(app.node('webhook').querySelector('.client-node-label').textContent, 'Webhook')
+    assert.equal(app.node('webhook').querySelector('.client-node-description'), null)
+    assert.equal(app.isDirty(), false)
+    await app.click('Back to Architect View')
+    assert.deepEqual(await app.save(path), file)
+  }
+  for (const [field, value] of [
+    ['clientLabel', null], ['clientLabel', 'A\nB'], ['clientLabel', 'x'.repeat(81)],
+    ['businessDescription', []], ['businessDescription', 'x'.repeat(241)],
+  ]) {
+    const invalid = structuredClone(legacyWorkflow)
+    invalid.nodes[0][field] = value
+    await app.open('/invalid.json', invalid)
+    assert.match(app.query('[role="status"]').textContent, /client label|business description/i)
+    assert.match(app.query('.file-status').textContent, /phase3a\.json/)
+    assert.equal(app.isDirty(), false)
+  }
+  phase3a.nodes[0].clientLabel = '   '
+  phase3a.nodes[0].businessDescription = ' Read request.\r\nCheck routing. '
+  await app.open('/normalized.json', phase3a)
+  assert.equal(app.isDirty(), false)
+  const node = (await app.save('/normalized.json')).nodes[0]
+  assert.equal(Object.hasOwn(node, 'clientLabel'), false)
+  assert.equal(node.businessDescription, 'Read request.\nCheck routing.')
 })

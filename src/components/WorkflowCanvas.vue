@@ -25,6 +25,10 @@ const {
 
 const projectName = ref(untitled)
 const architectView = ref(false)
+const clientView = ref(false)
+const presenting = defineModel<boolean>('presenting', { required: true })
+const presentButton = ref<HTMLButtonElement>()
+const exitPresentationButton = ref<HTMLButtonElement>()
 const overview = shallowRef<ProjectOverview>()
 const nodeDocumentation = reactive(new Map<string, NodeDocumentation>())
 const edgeDescriptions = reactive(new Map<string, string>())
@@ -77,7 +81,7 @@ function nextId(type: 'node' | 'edge') {
 function validConnection(connection: Connection) {
   // Vue Flow also validates stored edges when parsing graph updates.
   const existingId = 'id' in connection && typeof connection.id === 'string' ? connection.id : undefined
-  return (Boolean(existingId) || !connectionCancelled)
+  return (Boolean(existingId) || (!clientView.value && !connectionCancelled))
     && canConnect(connection, nodes.value, edges.value, existingId ?? reconnectingEdgeId)
 }
 
@@ -115,6 +119,23 @@ onNodesInitialized(fitInitializedGraph)
 function closePicker(restoreFocus = true) {
   pickerOpen.value = false
   if (restoreFocus) addButton.value?.focus()
+}
+
+function switchView() {
+  if (busy.value || activeNodeDrag.value || activeConnection || reconnectingEdgeId) return
+  const focused = document.activeElement
+  if (focused instanceof HTMLElement && focused.closest('input, textarea')) focused.blur()
+  closePicker(false)
+  endConnection(undefined, true)
+  removeSelectedElements()
+  clientView.value = !clientView.value
+  void nextTick(() => updateNodeInternals())
+}
+
+function setPresentation(enabled: boolean) {
+  if (!clientView.value) return
+  presenting.value = enabled
+  void nextTick(() => (enabled ? exitPresentationButton.value : presentButton.value)?.focus())
 }
 
 async function addNode(kind: NodeKind, copy?: WorkflowNodeData, preferred?: XYPosition, documentation?: NodeDocumentation) {
@@ -197,7 +218,9 @@ function closeInspector() {
 function commitDocumentationBeforePointerAction(event: PointerEvent) {
   const focused = document.activeElement
   // Canvas selection or dragging can take over before the browser moves focus.
-  if (event.button === 0 && focused instanceof HTMLTextAreaElement && event.target instanceof Node
+  if (event.button === 0 && (focused instanceof HTMLTextAreaElement
+    || (focused instanceof HTMLInputElement && focused.closest('.editor-documentation-field')))
+    && event.target instanceof Node
     && !focused.closest('label')?.contains(event.target)) focused.blur()
 }
 
@@ -212,9 +235,13 @@ function releaseGesture(event: MouseTouchEvent) {
 }
 
 function onEscape(event: KeyboardEvent) {
-  if (event.key !== 'Escape' || event.isComposing || event.target instanceof HTMLTextAreaElement) return
+  if (event.isComposing || (event.target instanceof HTMLElement && event.target.closest('.editor-documentation-field'))) return
 
-  if (activeConnection) {
+  if (presenting.value) {
+    setPresentation(false)
+  } else if (clientView.value) {
+    return
+  } else if (activeConnection) {
     connectionCancelled = true
     releaseGesture(activeConnection)
     endConnection()
@@ -248,7 +275,7 @@ function onShortcut(event: KeyboardEvent) {
     onEscape(event)
     return
   }
-  if (event.isComposing || busy.value || activeNodeDrag.value || activeConnection || reconnectingEdgeId
+  if (event.isComposing || clientView.value || busy.value || activeNodeDrag.value || activeConnection || reconnectingEdgeId
     || (event.target instanceof HTMLElement
       && (event.target.isContentEditable || event.target.closest('input, textarea, select')))) return
 
@@ -302,50 +329,63 @@ function applyDocument(document: WorkflowDocument, fit = false) {
 </script>
 
 <template>
-  <section class="workspace" aria-label="Workflow planning canvas" @pointerdown.capture="commitDocumentationBeforePointerAction">
-    <div class="workspace-heading">
+  <section
+    class="workspace" :class="{ 'is-client-view': clientView, 'is-presenting': presenting }"
+    :aria-label="clientView ? 'Client workflow canvas' : 'Workflow planning canvas'"
+    @pointerdown.capture="commitDocumentationBeforePointerAction"
+  >
+    <div v-if="!presenting" class="workspace-heading">
       <div>
-        <p class="eyebrow">WORKFLOW</p>
+        <p class="eyebrow">{{ clientView ? 'CLIENT VIEW' : 'WORKFLOW' }}</p>
         <h1>
           <input
-            class="project-name" aria-label="Project name" maxlength="100" :value="projectName" :disabled="busy"
+            v-if="!clientView" class="project-name" aria-label="Project name" maxlength="100" :value="projectName" :disabled="busy"
             @change="renameProject" @keydown.enter="($event.target as HTMLInputElement).blur()"
           />
+          <span v-else class="client-project-name">{{ projectName }}</span>
         </h1>
       </div>
       <div class="workspace-actions">
-        <div class="project-actions" role="group" aria-label="Project file">
-          <button class="reset-button" type="button" :disabled="busy" @click="newProject()">New Project</button>
-          <button class="reset-button" type="button" :disabled="busy || !isDesktop" @click="openProject()">Open…</button>
-          <button class="reset-button" type="button" :disabled="busy || !isDesktop" @click="saveProject()">Save</button>
-          <button class="reset-button" type="button" :disabled="busy || !isDesktop" @click="saveProject(true)">Save As…</button>
-        </div>
-        <div class="history-actions" role="group" aria-label="Edit history">
-          <button class="reset-button" type="button" :disabled="busy || !canUndo" title="Undo (Ctrl+Z)" aria-label="Undo" @click="undo">
-            <Undo2 :size="15" aria-hidden="true" />
+        <template v-if="!clientView">
+          <div class="project-actions" role="group" aria-label="Project file">
+            <button class="reset-button" type="button" :disabled="busy" @click="newProject()">New Project</button>
+            <button class="reset-button" type="button" :disabled="busy || !isDesktop" @click="openProject()">Open…</button>
+            <button class="reset-button" type="button" :disabled="busy || !isDesktop" @click="saveProject()">Save</button>
+            <button class="reset-button" type="button" :disabled="busy || !isDesktop" @click="saveProject(true)">Save As…</button>
+          </div>
+          <div class="history-actions" role="group" aria-label="Edit history">
+            <button class="reset-button" type="button" :disabled="busy || !canUndo" title="Undo (Ctrl+Z)" aria-label="Undo" @click="undo">
+              <Undo2 :size="15" aria-hidden="true" />
+            </button>
+            <button class="reset-button" type="button" :disabled="busy || !canRedo" title="Redo (Ctrl+Shift+Z or Ctrl+Y)" aria-label="Redo" @click="redo">
+              <Redo2 :size="15" aria-hidden="true" />
+            </button>
+          </div>
+          <div class="node-picker-anchor">
+            <button
+              ref="addButton" class="reset-button add-node-button" type="button"
+              :disabled="busy" aria-haspopup="dialog" :aria-expanded="pickerOpen" :aria-controls="pickerOpen ? 'node-picker' : undefined"
+              @click="pickerOpen = !pickerOpen"
+            >
+              <Plus :size="15" aria-hidden="true" />Add Node
+            </button>
+            <NodePicker v-if="pickerOpen && !busy" @add="addNode" @close="closePicker()" />
+          </div>
+          <button class="reset-button" type="button" :disabled="busy" :aria-pressed="architectView" @click="architectView = !architectView">
+            Architect View
           </button>
-          <button class="reset-button" type="button" :disabled="busy || !canRedo" title="Redo (Ctrl+Shift+Z or Ctrl+Y)" aria-label="Redo" @click="redo">
-            <Redo2 :size="15" aria-hidden="true" />
-          </button>
-        </div>
-        <div class="node-picker-anchor">
-          <button
-            ref="addButton" class="reset-button add-node-button" type="button"
-            :disabled="busy" aria-haspopup="dialog" :aria-expanded="pickerOpen" :aria-controls="pickerOpen ? 'node-picker' : undefined"
-            @click="pickerOpen = !pickerOpen"
-          >
-            <Plus :size="15" aria-hidden="true" />Add Node
-          </button>
-          <NodePicker v-if="pickerOpen && !busy" @add="addNode" @close="closePicker()" />
-        </div>
-        <button class="reset-button" type="button" :disabled="busy" :aria-pressed="architectView" @click="architectView = !architectView">
-          Architect View
+          <button class="reset-button" type="button" :disabled="busy" @click="newProject(true)">Load demo</button>
+        </template>
+        <button class="reset-button" type="button" :disabled="busy" @click="switchView">
+          {{ clientView ? 'Back to Architect View' : 'Client View' }}
         </button>
-        <button class="reset-button" type="button" :disabled="busy" @click="newProject(true)">Load demo</button>
+        <button v-if="clientView" ref="presentButton" class="reset-button" type="button" @click="setPresentation(true)">
+          Present
+        </button>
       </div>
     </div>
 
-    <div v-if="recoveries.length" class="recovery-panel">
+    <div v-if="!clientView && recoveries.length" class="recovery-panel">
       <button class="reset-button" type="button" :aria-expanded="showRecovery" @click="showRecovery = !showRecovery">
         Recovery snapshots ({{ recoveries.length }})
       </button>
@@ -359,7 +399,7 @@ function applyDocument(document: WorkflowDocument, fit = false) {
       </ul>
     </div>
 
-    <p v-if="notice || recoveryError" class="workspace-notice" role="status">{{ notice }} {{ recoveryError }}</p>
+    <p v-if="!presenting && (notice || recoveryError)" class="workspace-notice" role="status">{{ notice }} {{ recoveryError }}</p>
 
     <div class="canvas-frame" :inert="busy">
       <VueFlow
@@ -368,7 +408,14 @@ function applyDocument(document: WorkflowDocument, fit = false) {
         :connection-line-options="{ type: ConnectionLineType.Bezier }"
         :is-valid-connection="validConnection"
         :edge-updater-radius="9"
-        edges-updatable
+        :edges-updatable="!clientView"
+        :nodes-draggable="!clientView"
+        :nodes-connectable="!clientView"
+        :connect-on-click="!clientView"
+        :elements-selectable="!clientView"
+        :nodes-focusable="!clientView"
+        :edges-focusable="!clientView"
+        :disable-keyboard-a11y="clientView"
         :min-zoom="0.25"
         :max-zoom="2"
         :delete-key-code="null"
@@ -378,15 +425,15 @@ function applyDocument(document: WorkflowDocument, fit = false) {
         @edge-click="closePicker(false)"
       >
         <template #node-workflow="nodeProps">
-          <WorkflowNode :data="nodeProps.data" :selected="nodeProps.selected" />
+          <WorkflowNode :data="nodeProps.data" :selected="nodeProps.selected" :client="clientView" />
         </template>
 
-        <Panel position="top-left" class="canvas-note">
+        <Panel v-if="!clientView" position="top-left" class="canvas-note">
           <span class="canvas-note-dot" aria-hidden="true"></span>
           Sketch freely. Nothing runs here.
         </Panel>
 
-        <Panel v-if="!pickerOpen && (architectView || selectedNode || selectedEdge)" position="top-right" class="inspector-panel nopan nowheel">
+        <Panel v-if="!clientView && !pickerOpen && (architectView || selectedNode || selectedEdge)" position="top-right" class="inspector-panel nopan nowheel">
           <GraphInspector
             :key="selectedNode?.id ?? selectedEdge?.id ?? ''"
             :node="selectedNode" :edge="selectedEdge" :architect="architectView"
@@ -402,6 +449,12 @@ function applyDocument(document: WorkflowDocument, fit = false) {
             @duplicate="duplicateNode"
             @delete="deleteSelection"
           />
+        </Panel>
+
+        <Panel v-if="presenting" position="top-right" class="presentation-controls nopan">
+          <button ref="exitPresentationButton" class="reset-button" type="button" @click="setPresentation(false)">
+            Exit Presentation
+          </button>
         </Panel>
 
         <Panel position="bottom-left" class="canvas-controls">
@@ -422,8 +475,8 @@ function applyDocument(document: WorkflowDocument, fit = false) {
       </VueFlow>
     </div>
 
-    <footer class="workspace-footer">
-      <span class="interaction-hint"><MousePointer2 :size="13" aria-hidden="true" />Drag nodes · Connect ports · Scroll to zoom · Drag canvas to pan</span>
+    <footer v-if="!presenting" class="workspace-footer">
+      <span v-if="!clientView" class="interaction-hint"><MousePointer2 :size="13" aria-hidden="true" />Drag nodes · Connect ports · Scroll to zoom · Drag canvas to pan</span>
       <span class="file-status" :title="filePath">
         {{ nodes.length }} nodes<span class="footer-separator">/</span>{{ edges.length }} connections<span class="footer-separator">/</span>
         {{ fileName ?? (isDesktop ? 'No project file' : 'Browser preview') }}{{ dirty ? ' · Unsaved changes' : '' }}

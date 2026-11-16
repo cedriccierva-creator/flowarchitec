@@ -1,6 +1,6 @@
 # FlowArchitect
 
-A small Tauri 2 + Vue 3 desktop canvas for planning n8n and Make automations. Phase 3A adds Architect View for documenting the design alongside the workflow graph.
+A small Tauri 2 + Vue 3 desktop canvas for planning n8n and Make automations. Document the design in Architect View and walk through the same workflow in Client View or Presentation Mode.
 
 ## Run
 
@@ -67,11 +67,19 @@ Network access to npm and Rust crate sources is needed for a fresh build. The co
 - Notes accept multiline plain text. Tab or click away to commit one field edit to project history. **Escape** in a note restores its last committed text. Inside the field, Enter inserts a line break, and the usual text-editing shortcuts apply. Save, project switches, and normal window close also commit a focused note.
 - Recovery captures committed notes after the usual 500 ms delay. A forced exit can lose text still being edited in a focused field or committed too recently for the snapshot to finish.
 
+## Client View and Presentation Mode
+
+- Turn on **Architect View** and select a node. In the inspector’s **Client View** section, enter a **Client label** and **Business description**. Tab or click away to commit each field. Escape restores its last committed text. Duplicating a node copies both fields.
+- Click **Client View** in the toolbar to see the read-only diagram. The larger cards use the client label when available and the technical name otherwise. Long labels and descriptions show up to two lines each. Hover over either field to read the full text. Ports, edge labels, and editing controls are hidden. Click **Back to Architect View** to edit or manage project files.
+- Click **Present** to give the diagram the full app content area. Pan, zoom, and **Fit workflow to view** work in both client modes. Click **Exit Presentation** or press Escape to return to Client View. View changes preserve the current viewport and leave project history intact.
+- Cards keep their Architect canvas coordinates. Closely spaced nodes may overlap in Client View. Adjust their spacing in Architect View when preparing a diagram for presentation.
+
 ## Project files, recovery, and history
 
 - The app starts with an empty workflow. Click the project title to rename it. **New Project** resets the graph and project name. **Load demo** starts a separate workflow with the original five nodes and four edges. Switching away from unsaved changes requires confirmation.
 - **Save** writes to the current file, or prompts for a location on the first save. **Save As…** chooses a destination, and **Open…** validates a local workflow before switching. The canvas footer shows the current filename and unsaved status. Hover over it for the full path.
 - Workflow JSON uses `schemaVersion: 1` and stores the project name, nodes, positions, icons, colors, connections, and labels. Documentation is optional under `metadata.overview`, `nodes[].documentation`, and `edges[].description`. Phase 2B files open with empty fields. Blank notes are omitted on save. Each note supports up to 8,000 UTF-16 code units. Files must be UTF-8 and at most 8 MiB. Saving writes a temporary file beside the destination and atomically renames it into place on Linux.
+- Client metadata uses optional `nodes[].clientLabel` and `nodes[].businessDescription` fields. Labels are single-line text up to 80 UTF-16 code units, and descriptions allow up to 240. Blank values are omitted from JSON. Phase 2B and 3A files use the technical node names in Client View. Client metadata participates in save, reopen, undo, redo, and recovery alongside technical notes.
 - Unsaved edits are written after 500 ms of inactivity to snapshots under Tauri's application-data `recovery` folder. On Linux this is normally `~/.local/share/io.flowarchitect.desktop/recovery/`. Switching projects or closing the window flushes pending edits. Snapshots are offered at startup. **Restore as unsaved** loads a copy that needs an explicit file destination, and **Discard snapshot** permanently removes the selected snapshot after confirmation.
 - **Ctrl+Z** undoes an edit. **Ctrl+Shift+Z** and **Ctrl+Y** redo. The workspace keeps up to 80 undo steps in memory per open workflow. A drag counts as one step, and text fields keep their own editing shortcuts.
 
@@ -85,9 +93,9 @@ Native file and recovery actions are available in the Linux Tauri app. The brows
 | `src/components/WorkflowCanvas.vue` | Vue Flow state, project and recovery controls, and keyboard shortcuts |
 | `src/composables/useWorkflowSession.ts` | Active project, unsaved state, history, and recovery scheduling |
 | `src/data/workflowDocument.ts`, `src/data/desktop.ts` | Workflow schema, validation, and Tauri command bridge |
-| `src/components/WorkflowNode.vue` | Reusable icon tile, label, and handles |
+| `src/components/WorkflowNode.vue` | Architect tile, Client View card, and shared connection anchors |
 | `src/components/NodePicker.vue`, `src/components/GraphInspector.vue` | Searchable picker and contextual editing |
-| `src/components/DocumentationField.vue` | Multiline text editing and blur commits |
+| `src/components/DocumentationField.vue` | Plain text editing and blur commits |
 | `src/data/nodeCatalog.ts`, `src/data/sampleWorkflow.ts`, `src/data/workflowGraph.ts` | Node definitions, demo graph, connection validation, and node placement |
 | `src/style.css` | Plain CSS, warm charcoal theme |
 | `public/` | Local SVG app mark and dot pattern |
@@ -102,7 +110,7 @@ The frontend structure is adapted from the official cached `create-vite` Vue/Typ
 
 ## Verification
 
-The [verification notes](docs/verification.md) record the automated results, test commands, and Phase 3A COSMIC/Wayland checklist.
+The [verification notes](docs/verification.md) record the automated results, test commands, and Phase 3B COSMIC/Wayland checklist.
 
 ## Official references
 

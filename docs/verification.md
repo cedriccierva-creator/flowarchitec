@@ -1,5 +1,47 @@
 # FlowArchitect verification
 
+## Phase 3B — Client View and Presentation Mode
+
+Checked on 2026-11-16 from a clean worktree at `bcdc0df`.
+
+### Automated checks
+
+| Check | Result |
+| --- | --- |
+| `npm run doctor` | Passed. Node, Rust/Cargo, and the Linux development dependencies were detected. |
+| `npm run build` | Passed. Vue/TypeScript checks and the Vite production build completed. |
+| `tests/architect-view.test.cjs` | 20 passed, 0 failed, 0 skipped. The suite loads the production JavaScript and CSS in jsdom, simulates input and canvas geometry, and mocks Tauri commands. Eight tests cover Phase 3B. The other twelve cover Architect View and workflow persistence regressions. |
+| `cargo test --manifest-path src-tauri/Cargo.toml --locked --offline` | 2 passed. Covered native workflow file storage and recovery ID validation. |
+| `cargo build --manifest-path src-tauri/Cargo.toml --locked --offline --features tauri/custom-protocol` | Passed. Built the Linux executable with embedded frontend assets. |
+
+Phase 3B checks cover view switching with the same canvas and element identities, business text and fallbacks, pointer and keyboard edit protection, unchanged coordinates and topology, presentation controls and Escape, zoom/pan/fit, Save/Save As/Open, older JSON and invalid client fields, duplication, undo/redo, dirty state, and recovery.
+
+The reconnection regression test moves a documented edge’s target and source, attempts a duplicate endpoint connection, then saves the result and verifies its ID, new endpoints, label, and technical description. Both endpoint updates passed using simulated input. Native pointer hit testing is pending for the previously skipped manual check.
+
+Run the production bundle suite with a temporary test dependency:
+
+```bash
+npm run build
+qa_dir=$(mktemp -d)
+npm install --prefix "$qa_dir" --no-save --no-package-lock jsdom@30.1.3
+NODE_PATH="$qa_dir/node_modules" node tests/architect-view.test.cjs
+```
+
+### Manual COSMIC/Wayland checklist
+
+Native desktop verification is pending. `tauri dev` stopped when the sandbox denied Vite’s bind to `127.0.0.1:1420`, and the compiled executable could not initialize GTK. Run from a terminal in the COSMIC desktop session:
+
+```bash
+cd /home/cedric/projects/flowarchitect && npm run desktop:dev
+```
+
+1. Load the demo, turn on **Architect View**, and select **HTTP Request**. Enter a client label, a short business description, and a technical note. Switch to **Client View**. Verify the card shows the client text, the other nodes fall back to their technical names, and the existing positions, arrowheads, and curved connections match the workflow. Try long text and check the card’s two-line previews and full hover text.
+2. Try dragging a card, clicking an edge, starting a connection, and pressing Delete, Backspace, the arrow keys, and Ctrl+Z. Verify the graph stays the same and editing controls are hidden. Check wheel or pinch zoom, background pan, and **Fit workflow to view**.
+3. Click **Present**. Pan and zoom, resize the window to its minimum and back, and click **Fit workflow to view**. Verify the diagram and controls remain usable. Exit once with Escape and once with **Exit Presentation**. Check that the viewport persists across exit and the workflow’s saved or unsaved status stays the same.
+4. Return to Architect View. Verify compact nodes, drag and connection editing, and inspector access. Duplicate the edited node and confirm both client fields copy. Use Ctrl+Z and redo after committing a field. Check that a draft supports native text shortcuts and that Escape reverts it.
+5. Use native **Save**, **Save As…**, and **Open…** dialogs to round-trip the client text and technical notes. Open a Phase 2B or 3A JSON file and check fallback names. Change the client text, wait for recovery, close the app normally, reopen it, and verify **Restore as unsaved**.
+6. In Architect View, select the demo edge from **Router** to **AI Agent** and give it a label and a technical description. Select the edge and drag its highlighted target updater to **Error Handler**’s input. Reselect the edge and drag its highlighted source updater to **Webhook Trigger**’s output. Verify the label and description survive each change and still match after saving and reopening.
+
 ## Phase 3A — Architect View and Technical Documentation
 
 Checked on 2026-11-16. The worktree started clean at `243792e`.

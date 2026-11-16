@@ -1,0 +1,22 @@
+node_modules/
+dist/
+*.local
+*.log
+.DS_Store
+src-tauri/target/
+src-tauri/gen/schemas/
+
+
+# Dependencies and builds
+node_modules/
+dist/
+src-tauri/target/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Logs and temporary files
+*.log
+.DS_Store

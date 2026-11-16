@@ -1,0 +1,128 @@
+:root {
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: #e4dfd5;
+  background: #1d1c1a;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  color-scheme: dark;
+  --muted: #aaa498;
+  --line: #36332e;
+  --accent: #d3ac74;
+}
+
+* { box-sizing: border-box; }
+html, body, #app { width: 100%; height: 100%; margin: 0; }
+body { min-width: 640px; overflow: hidden; }
+button { font: inherit; cursor: pointer; color: inherit; }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+button:hover { background: #34312c; color: #f5efe4; }
+button svg { flex-shrink: 0; }
+.app-shell { display: flex; flex-direction: column; height: 100%; }
+.app-header { display: flex; align-items: center; justify-content: space-between; padding: 0 28px; height: 66px; flex-shrink: 0; border-bottom: 1px solid var(--line); }
+.brand { display: flex; align-items: center; gap: 10px; font-size: 14px; font-weight: 650; letter-spacing: -0.3px; }
+.brand-mark { display: flex; color: var(--accent); margin-right: 2px; }
+.phase-badge { margin-left: 9px; padding: 4px 7px; border: 1px solid #494033; border-radius: 4px; color: #c2a67e; font-size: 9px; font-weight: 500; letter-spacing: 1.3px; }
+.local-status { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 11px; }
+.local-status > span { width: 5px; height: 5px; border-radius: 50%; background: #a8b396; }
+.workspace { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 0 28px; }
+.workspace-heading { display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; padding: 30px 0 26px; gap: 20px; }
+.eyebrow { margin: 0 0 9px; font-size: 9px; color: var(--muted); letter-spacing: 1.7px; font-weight: 600; }
+h1 { margin: 0; font-size: 25px; font-weight: 500; letter-spacing: -0.9px; line-height: 1.25; }
+.title-dot { color: var(--accent); }
+.workspace-description { margin: 8px 0 0; font-size: 12px; color: var(--muted); }
+.reset-button { display: inline-flex; align-items: center; gap: 7px; border: 1px solid #454037; border-radius: 5px; padding: 9px 12px; background: transparent; color: #c5bdae; font-size: 11px; white-space: nowrap; }
+.canvas-frame { flex: 1; min-height: 0; position: relative; border: 1px solid var(--line); border-radius: 9px; overflow: hidden; background: #201f1c url('/canvas-grid.svg') repeat; }
+.vue-flow { --vf-node-color: #e4dfd5; --vf-connection-path: #d3ac74; --vf-handle: #b7afa0; --vf-edge: #8f8b82; --vf-box-shadow: none; }
+.vue-flow__panel.canvas-note { display: flex; align-items: center; gap: 7px; margin: 20px; color: #aaa295; font-size: 10px; pointer-events: none; }
+.canvas-note-dot { width: 4px; height: 4px; border: 1px solid #aa9473; border-radius: 50%; }
+.vue-flow__node-workflow { width: 72px; height: 72px; border: none; background: none; }
+.workflow-node { width: 72px; height: 72px; position: relative; --node-accent: #d3ac74; --node-border: #6b5840; }
+.node-http { --node-accent: #92aebe; --node-border: #485c66; }
+.node-router { --node-accent: #a3b88d; --node-border: #526047; }
+.node-agent { --node-accent: #b4a3cc; --node-border: #60516f; }
+.node-error { --node-accent: #d0988c; --node-border: #74544b; }
+.node-tile { display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; border: 1px solid var(--node-border); border-radius: 17px; background: #292722; color: var(--node-accent); }
+.workflow-node:hover .node-tile { border-color: var(--node-accent); }
+.is-selected .node-tile, .vue-flow__node:focus-visible .node-tile { outline: 2px solid var(--node-accent); outline-offset: 5px; }
+.vue-flow__node:focus-visible { outline: none; }
+.node-label { position: absolute; top: 84px; left: 50%; transform: translateX(-50%); width: 165px; text-align: center; pointer-events: none; }
+.node-label > span { display: block; overflow: hidden; text-overflow: ellipsis; font-size: 12px; font-weight: 550; color: #e0d9ce; white-space: nowrap; }
+.node-label small { display: block; margin-top: 5px; font-size: 10px; color: #a79e90; }
+.workflow-node .vue-flow__handle { width: 12px; height: 12px; min-width: 12px; min-height: 12px; border: 2px solid #201f1c; background: #b1a797; border-radius: 50%; }
+.workflow-node .vue-flow__handle-right { right: -6px; }
+.workflow-node .vue-flow__handle-left { left: -6px; }
+.workflow-node .vue-flow__handle:hover, .workflow-node .vue-flow__handle.connecting, .workflow-node .vue-flow__handle.valid { background: var(--node-accent); outline: 3px solid #4f483a; }
+.vue-flow__edge-path { stroke: #8f8b82; stroke-width: 1.6; }
+.vue-flow__edge.selected .vue-flow__edge-path { stroke: var(--accent); stroke-width: 2.3; }
+.vue-flow__edge .vue-flow__edgeupdater { pointer-events: none; }
+.vue-flow__edge.selected .vue-flow__edgeupdater { pointer-events: all; fill: #3f3528; stroke: var(--accent); stroke-width: 1.2; cursor: grab; }
+.vue-flow__edge.selected .vue-flow__edgeupdater:hover { fill: #7f6747; }
+.vue-flow__connection-path { stroke: var(--accent); stroke-width: 1.8; }
+.vue-flow__panel.canvas-controls { margin: 18px; }
+.viewport-controls { display: flex; align-items: center; gap: 3px; padding: 5px; background: #27251f; border: 1px solid #464036; border-radius: 6px; }
+.viewport-controls button { width: 31px; height: 29px; padding: 0; display: grid; place-items: center; background: transparent; border: none; border-radius: 3px; color: #c2b8a8; }
+.viewport-controls button:hover { background: #3a352d; }
+.viewport-controls output { width: 43px; text-align: center; font-size: 11px; color: #c2b8a8; font-variant-numeric: tabular-nums; }
+.control-divider { width: 1px; height: 17px; background: #494238; margin: 0 4px; }
+.workspace-footer { min-height: 46px; flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; gap: 16px; font-size: 10px; color: #aaa295; }
+.interaction-hint { display: flex; align-items: center; gap: 7px; }
+.footer-separator { margin: 0 10px; color: #6c6457; }
+.workspace-actions { display: flex; align-items: center; gap: 8px; }
+.node-picker-anchor { position: relative; }
+.add-node-button { color: #e8c798; border-color: #66533d; background: #2d271f; }
+.editor-popover {
+  width: 230px;
+  padding: 12px;
+  border: 1px solid #494238;
+  border-radius: 7px;
+  background: #27251f;
+  box-shadow: 0 5px 16px #14131188;
+  color: #e4dfd5;
+  font-size: 11px;
+}
+.node-picker { position: absolute; z-index: 10; right: 0; top: calc(100% + 8px); }
+.vue-flow__panel.inspector-panel { margin: 14px; }
+.graph-inspector { max-height: calc(100% - 24px); overflow-y: auto; }
+.editor-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.editor-heading h2 { margin: 0; font-size: 12px; font-weight: 600; }
+.editor-close { display: grid; place-items: center; padding: 4px; border: 0; border-radius: 4px; background: transparent; color: var(--muted); }
+.editor-field { display: grid; gap: 5px; margin-bottom: 9px; color: #bcb2a2; }
+.editor-popover input, .editor-popover select {
+  width: 100%;
+  min-width: 0;
+  padding: 7px 8px;
+  border: 1px solid #494238;
+  border-radius: 4px;
+  background: #201f1c;
+  color: #e4dfd5;
+  font: inherit;
+}
+.editor-popover :is(input, select):focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+.node-search { display: flex; align-items: center; gap: 7px; color: var(--muted); }
+.node-search svg { flex-shrink: 0; }
+.node-options { display: grid; gap: 2px; margin: 8px 0 0; padding: 0; list-style: none; }
+.node-options button {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 7px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  text-align: left;
+}
+.node-options button:hover, .node-options button:focus-visible { background: #34312c; }
+.node-options svg { color: var(--accent); }
+.node-options small { display: block; margin-top: 2px; color: var(--muted); font-size: 10px; }
+.editor-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.editor-actions button { padding: 6px 7px; }
+.editor-delete { color: #dfaba1; }
+.editor-hint { margin: 8px 0 0; color: var(--muted); line-height: 1.4; }
+@media (max-width: 900px) {
+  .app-header { padding: 0 20px; }
+  .workspace { padding: 0 20px; }
+  .workspace-heading { padding: 24px 0; }
+  .workspace-footer { flex-wrap: wrap; justify-content: flex-start; gap: 7px; padding: 12px 0; }
+}

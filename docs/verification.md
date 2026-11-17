@@ -1,5 +1,46 @@
 # FlowArchitect verification
 
+## Phase 5D — Architecture Validation
+
+Implemented on 2026-11-17 from clean commit `373f523`. Findings are derived locally from version 1 document captures and are never persisted. No dependencies or Rust behavior changed. The earlier external brief was not present in the repository; the implemented rules and their boundaries are listed in README's Architecture validation section.
+
+### Automated checks
+
+All checks below were rerun successfully after the native QA report. Review of all eight Phase 5D changed files found no unrelated modifications, added dependencies, secrets, or generated artifacts in the intended commit. Earlier phase history is preserved.
+
+| Check | Result |
+| --- | --- |
+| `npm run build` | Passed Vue/TypeScript checks and production Vite build. |
+| `node tests/architecture-validation.test.cjs` | 4 passed: deterministic order/IDs, immutability, graph/port evidence, documentation, empty and sections-only documents. |
+| `NODE_PATH=/tmp/flowarchitect-qa-5S4zAy/node_modules node tests/architect-view.test.cjs` | 50 passed, including all 47 prior scenarios. |
+| `cargo test --manifest-path src-tauri/Cargo.toml --locked --offline` | 3 passed. |
+| `CARGO_NET_OFFLINE=true npm run desktop:build -- -- --locked --offline` | Passed; standalone Linux release executable produced. |
+| `git diff --check` | Passed. |
+
+The existing temporary jsdom installation was reused; no test dependencies were added to the project. For a fresh environment, use the temporary jsdom installation instructions under Phase 5C. Run the data tests directly with Node; they transpile the actual data modules with the existing TypeScript dependency. Production-bundle UI tests use simulated layout and mocked native commands. They verify view gating, node/edge/project navigation, live documentation and topology changes, undo/redo, dirty state, draft and recovery preservation, large workflows, offline behavior, and continued export operation. The existing regression suite covers save/reopen, recovery, schema compatibility, and PNG, Markdown and review-prompt content.
+
+### Native COSMIC/Wayland QA — passed
+
+The user reported all six native QA scenarios passed. Notes: None. These results cover actual desktop behavior and complement the automated checks.
+
+| Scenario | Result |
+| --- | --- |
+| Validation findings | PASSED |
+| Finding navigation | PASSED |
+| Refresh after edits | PASSED |
+| Read-only behavior and history | PASSED |
+| Keyboard and view restrictions | PASSED |
+| Exports, performance, and window | PASSED |
+
+The original acceptance checklist is retained below for repeat verification. Run `./src-tauri/target/release/flowarchitect` from the desktop terminal, or `npm run desktop:dev`.
+
+1. **Panel and views:** Enable Architect View, open Validate Architecture on an empty workflow, then Load demo. Confirm readable warning/suggestion counts and evidence IDs. Hide Architect View, enter Client View and Present; validation must be hidden. Return and close/reopen validation.
+2. **Graph evidence:** Add an isolated HTTP node; confirm the disconnected warning. Connect its output to another node; confirm it changes to a no-incoming warning. Connect a trigger to its input and confirm that warning clears. Delete the demo Router Error connection; confirm the Error-output warning appears, then undo/redo. A terminal output is allowed. Edge colors, labels and error-strategy notes must not substitute for an actual Error-port connection.
+3. **Documentation:** Click missing project, node and connection documentation findings. Confirm the inspector switches to the correct IDs, distant nodes center and highlight, and edges select and center between their endpoints. Enter notes, Tab to commit, and confirm listed missing fields update. Clear a description and check the suggestion returns. Test duplicate node labels to confirm navigation follows IDs.
+4. **Drafts and history:** Save, make two note edits, undo once, and type a draft. Open validation and confirm the draft remains focused and uncommitted, with redo available. Escape the draft, then redo. Clicking a finding while editing should commit the draft before switching context. Repeated validation navigation alone must leave a saved project clean and add no history. Confirm recovery, save/reopen and exports still preserve the actual workflow.
+5. **Keyboard and native dialogs:** Tab through findings and activate with Enter/Space. Verify the inspector receives focus, standard text shortcuts remain usable, and validation cannot change selection during native dialogs or canvas gestures. Close validation without losing canvas navigation.
+6. **Scale and exports:** At 800 × 560, open a large workflow with sections and the review panel. Scroll the validation panel and inspector, pan, zoom, Find and Fit, then export PNG/Markdown/review prompts. Confirm validation UI and findings are absent from exports, content remains complete, and the interface remains responsive. For widely spaced connection endpoints, use Fit to see the whole path. Watch the WebKit console for errors.
+
 ## Phase 5C — Canvas Navigation
 
 Started on 2026-11-16 from a clean working tree at `91f9e6f`, after Phase 5B native QA. Navigation uses Vue Flow’s viewport and does not write viewport, search, or highlight state to version 1 workflows.

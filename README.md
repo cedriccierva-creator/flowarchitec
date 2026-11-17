@@ -75,6 +75,14 @@ Network access to npm and Rust crate sources is needed for a fresh build. The co
 - Notes accept multiline plain text. Tab or click away to commit one field edit to project history. **Escape** in a note restores its last committed text. Inside the field, Enter inserts a line break, and the usual text-editing shortcuts apply. Save, project switches, and normal window close also commit a focused note.
 - Recovery captures committed notes after the usual 500 ms delay. A forced exit can lose text still being edited in a focused field or committed too recently for the snapshot to finish.
 
+## Architecture validation
+
+- Enable **Architect View** and click **Validate Architecture**. The panel updates from committed graph and documentation edits, including undo and redo. It runs deterministically and entirely offline in the browser and desktop app.
+- Warnings identify nodes with no incident connections, nodes with an input port but no incoming connection (excluding isolated nodes already reported), and Router Error outputs without a connection. Terminal outputs are allowed; an unconnected Error output does not establish that runtime errors are unhandled.
+- Documentation suggestions group missing overview and node fields by target, including error-handling strategy, and report connections without technical descriptions. Whitespace-only fields count as missing. Labels, colors, and note wording are not treated as evidence of a data contract or working error strategy.
+- Findings show IDs and concrete graph or field evidence in project, node, then connection order. Click a finding to select and center its node or connection, or open the project overview. Node findings reuse Find's focus highlight. A connection is centered between its endpoints; for widely spaced endpoints, use Fit or the minimap to inspect the whole path. Keyboard users can Tab to a finding and press Enter or Space.
+- Opening the panel preserves a focused draft. Selecting a finding commits that draft before changing inspector context, as other selections do. Validation itself does not change project content, dirty state, undo/redo, recovery, schema version 1, or exports. Findings are transient and advisory; no checks execute the workflow or interpret notes. The panel is hidden in Client View and Presentation Mode.
+
 ## Visual Sections
 
 - Enable **Architect View** and click **Add Section**. The new section appears near the visible canvas center. Click its title to edit the title, description, and color in the inspector. Drag the title to move it, or drag the lower-right handle to resize it to at least 160 × 100 graph units. Escape cancels a move or resize in progress.
@@ -123,6 +131,7 @@ Native file, recovery, and export actions are available in the Linux Tauri app. 
 | --- | --- |
 | `src/App.vue` | Minimal application frame |
 | `src/components/WorkflowCanvas.vue` | Vue Flow state, project and recovery controls, and keyboard shortcuts |
+| `src/data/architectureValidation.ts`, `src/components/ValidationPanel.vue` | Offline architecture findings and clickable Architect validation panel |
 | `src/components/WorkflowMinimap.vue`, `src/components/FindNode.vue` | Viewport map and search for existing nodes |
 | `src/composables/useWorkflowSession.ts` | Active project, unsaved state, history, and recovery scheduling |
 | `src/data/workflowDocument.ts`, `src/data/desktop.ts` | Workflow schema, validation, and Tauri command bridge |

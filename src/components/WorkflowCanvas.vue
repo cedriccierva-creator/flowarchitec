@@ -4,6 +4,9 @@ import { ConnectionLineType, ConnectionMode, getTransformForBounds, MarkerType, 
 import type { Connection, DefaultEdgeOptions, MouseTouchEvent, XYPosition } from '@vue-flow/core'
 import { Maximize, Minus, MousePointer2, Plus, Redo2, Search, Undo2 } from 'lucide-vue-next'
 import FindNode from './FindNode.vue'
+import ValidationPanel from './ValidationPanel.vue'
+import { validateArchitecture } from '../data/architectureValidation'
+import type { ArchitectureFinding } from '../data/architectureValidation'
 import GraphInspector from './GraphInspector.vue'
 import NodePicker from './NodePicker.vue'
 import VisualSectionLayer from './VisualSectionLayer.vue'
@@ -21,7 +24,7 @@ import { createSection } from '../data/visualSections'
 import type { VisualSection } from '../data/visualSections'
 
 const {
-  addEdges, addNodes, addSelectedNodes, connectionClickStartHandle, dimensions, edges, endConnection,
+  addEdges, addNodes, addSelectedEdges, addSelectedNodes, connectionClickStartHandle, dimensions, edges, endConnection,
   findNode, getNodesInitialized, getSelectedEdges, getSelectedNodes, nodes, onClickConnectStart,
   onConnect, onConnectEnd, onConnectStart, onEdgeUpdate,
   onEdgeUpdateEnd, onEdgeUpdateStart, onNodeDragStart, onNodeDragStop, onNodesInitialized, project,
@@ -34,6 +37,7 @@ const architectView = ref(false)
 const clientView = ref(false)
 const presenting = defineModel<boolean>('presenting', { required: true })
 const reviewOpen = ref(false)
+const validationOpen = ref(false)
 const showReviewControls = computed(() => architectView.value && !clientView.value && !presenting.value)
 const longReviewPromptThreshold = 50_000
 const presentButton = ref<HTMLButtonElement>()
@@ -116,6 +120,40 @@ const {
   applyDocument,
   () => Boolean(activeNodeDrag.value || sectionGesture.value),
 )
+
+const validationFindings = computed(() => validateArchitecture(captureWorkflow(
+  { name: projectName.value, overview: overview.value }, nodes.value, edges.value,
+  nodeDocumentation, edgeDescriptions, sections.value,
+)))
+
+function focusFinding(finding: ArchitectureFinding) {
+  if (!showReviewControls.value || !canNavigate()) return
+  const target = finding.target
+  const node = target.type === 'node' ? findNode(target.id!) : undefined
+  const edge = target.type === 'edge' ? edges.value.find(({ id }) => id === target.id) : undefined
+  if ((target.type === 'node' && !node) || (target.type === 'edge' && !edge)) return
+  // Finish an inspector draft before changing its context.
+  const active = document.activeElement
+  if (active instanceof HTMLElement && textEntry(active)) active.blur()
+  closePicker(false)
+  closeFind(false)
+  removeSelectedElements()
+  selectedSectionId.value = undefined
+  focusedNodeId.value = undefined
+  if (node) {
+    addSelectedNodes([node])
+    focusNode(node.id)
+  } else if (edge) {
+    addSelectedEdges([edge])
+    const source = findNode(edge.source)
+    const destination = findNode(edge.target)
+    if (source && destination) {
+      void setCenter((source.position.x + destination.position.x + architectTile.width) / 2,
+        (source.position.y + destination.position.y + architectTile.height) / 2, { zoom: Math.max(1, viewport.value.zoom) })
+    }
+  }
+  void nextTick(() => vueFlowRef.value?.querySelector<HTMLElement>('.graph-inspector textarea')?.focus({ preventScroll: true }))
+}
 
 function nextId(type: 'node' | 'edge' | 'section') {
   let id: string
@@ -612,6 +650,11 @@ function applyDocument(document: WorkflowDocument, fit = false) {
             Export Markdown
           </button>
         </div>
+        <button v-if="showReviewControls" class="reset-button" type="button" data-viewport-action
+          :aria-expanded="validationOpen" :aria-controls="validationOpen ? 'architecture-validation' : undefined"
+          :disabled="navigationBlocked" @mousedown="keepFieldFocused" @click="validationOpen = !validationOpen">
+          Validate Architecture
+        </button>
         <button v-if="showReviewControls" class="reset-button" type="button" data-export-action
           :aria-controls="reviewOpen ? 'review-prompt' : undefined" :aria-expanded="reviewOpen"
           @mousedown="keepFieldFocused" @click="reviewOpen = !reviewOpen">
@@ -619,6 +662,9 @@ function applyDocument(document: WorkflowDocument, fit = false) {
         </button>
       </div>
     </div>
+
+    <ValidationPanel v-if="showReviewControls && validationOpen" :findings="validationFindings"
+      :blocked="navigationBlocked" :empty="!nodes.length" @focus="focusFinding" @close="validationOpen = false" />
 
     <section v-if="showReviewControls && reviewOpen" id="review-prompt" class="review-prompt" aria-label="AI review prompt">
       <div class="review-prompt-actions">
